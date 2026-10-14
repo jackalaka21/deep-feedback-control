@@ -40,15 +40,28 @@ class RandomPolicy:
         return self.action_space.sample(), None
 
 
-def run_episode(env, policy, seed=None) -> float:
+def run_episode_parts(env, policy, seed=None) -> dict:
+    """Run one episode and split the return into its task and control-cost parts.
+
+    Reacher's reward is `reward_dist + reward_ctrl`. The control cost is charged on the action the
+    motors actually receive, so stresses that shrink actions (deadband, degradation) also shrink
+    the cost. `distance_return` (-sum of distance to target) is therefore the clean task measure.
+    """
     obs, _ = env.reset(seed=seed)
-    total, done = 0.0, False
+    total = distance = control = 0.0
+    done = False
     while not done:
         action, _ = policy.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
         total += float(reward)
+        distance += float(info["reward_dist"])
+        control += float(info["reward_ctrl"])
         done = terminated or truncated
-    return total
+    return {"episode_return": total, "distance_return": distance, "control_return": control}
+
+
+def run_episode(env, policy, seed=None) -> float:
+    return run_episode_parts(env, policy, seed)["episode_return"]
 
 
 def load_policy(model_path, device: str = "cpu"):
@@ -81,27 +94,45 @@ def run_ipqc_sweep(model, cfg: dict, episodes_per_seed=None, seeds=None) -> pd.D
             env = make_stressed_env(cfg["env_id"], **kwargs)
             policy = RandomPolicy(env.action_space, seed) if stress_type == "random" else model
             for ep in range(n_eps):
-                ret = run_episode(env, policy, seed=seed if ep == 0 else None)
+                parts = run_episode_parts(env, policy, seed=seed if ep == 0 else None)
                 rows.append(
                     dict(stress_type=stress_type, level=float(level), order=order,
-                         seed=seed, episode=ep, episode_return=ret)
+                         seed=seed, episode=ep, **parts)
                 )
             env.close()
     return pd.DataFrame(rows)
 
 
-def summarize(df: pd.DataFrame) -> pd.DataFrame:
-    g = df.groupby(["stress_type", "level", "order"], as_index=False)["episode_return"].agg(
-        mean_return="mean", std_return="std", n_episodes="count"
-    )
-    r_rand = g.loc[g.stress_type == "random", "mean_return"].iloc[0]
-    r_nom = g.loc[g.stress_type == "nominal", "mean_return"].iloc[0]
+def _retention(g: pd.DataFrame, column: str, label: str) -> pd.Series:
+    """(R - R_random) / (R_nominal - R_random) for the mean-return column `column`."""
+    r_rand = g.loc[g.stress_type == "random", column].iloc[0]
+    r_nom = g.loc[g.stress_type == "nominal", column].iloc[0]
     if r_nom <= r_rand:
         raise ValueError(
-            f"Nominal return ({r_nom:.2f}) is not better than the random policy ({r_rand:.2f}); "
+            f"Nominal return ({r_nom:.2f}, {label}) is not better than the random policy ({r_rand:.2f}); "
             "the model is not trained well enough to stress-test. Train longer."
         )
-    g["score"] = (g["mean_return"] - r_rand) / (r_nom - r_rand)
+    return (g[column] - r_rand) / (r_nom - r_rand)
+
+
+def summarize(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-condition means plus retention scores.
+
+    `score` is retention on the task measure (distance only, no control cost) and drives the safety
+    boundaries; it can go negative when the arm is worse than random at reaching the target.
+    `total_score` is retention on the full reward, which also includes the control-cost term that
+    stresses artificially shrink; it is reported for transparency but flatters deadband/degradation.
+    """
+    g = df.groupby(["stress_type", "level", "order"], as_index=False).agg(
+        mean_return=("episode_return", "mean"),
+        std_return=("episode_return", "std"),
+        mean_distance_return=("distance_return", "mean"),
+        std_distance_return=("distance_return", "std"),
+        mean_control_return=("control_return", "mean"),
+        n_episodes=("episode_return", "count"),
+    )
+    g["score"] = _retention(g, "mean_distance_return", "task/distance")
+    g["total_score"] = _retention(g, "mean_return", "total")
     return g.sort_values(["stress_type", "order"]).reset_index(drop=True)
 
 
@@ -130,12 +161,12 @@ def describe_boundary(stress_type: str, boundary: dict, threshold: float) -> str
 
 def plot_stress_curve(summary: pd.DataFrame, stress_type: str, boundary: dict, threshold: float):
     rows = summary[summary.stress_type == stress_type].sort_values("order")
-    r_rand = summary.loc[summary.stress_type == "random", "mean_return"].iloc[0]
-    r_nom = summary.loc[summary.stress_type == "nominal", "mean_return"].iloc[0]
+    r_rand = summary.loc[summary.stress_type == "random", "mean_distance_return"].iloc[0]
+    r_nom = summary.loc[summary.stress_type == "nominal", "mean_distance_return"].iloc[0]
     floor = r_rand + threshold * (r_nom - r_rand)
 
     fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    ax.errorbar(rows["level"], rows["mean_return"], yerr=rows["std_return"],
+    ax.errorbar(rows["level"], rows["mean_distance_return"], yerr=rows["std_distance_return"],
                 marker="o", capsize=3, label="TD3 policy (mean ± std)")
     ax.axhline(r_nom, ls="--", color="gray", label="nominal")
     ax.axhline(floor, ls="--", color="orange", label=f"{threshold:.0%} retention floor")
@@ -149,7 +180,7 @@ def plot_stress_curve(summary: pd.DataFrame, stress_type: str, boundary: dict, t
     if len(rows) > 1 and rows["level"].iloc[0] > rows["level"].iloc[-1]:
         ax.invert_xaxis()  # degradation: severity grows to the right
     ax.set_xlabel(STRESS_XLABEL[stress_type])
-    ax.set_ylabel("episode return (higher is better)")
+    ax.set_ylabel("task return: -sum of distance to target\n(higher is better)")
     ax.set_title(f"Reacher TD3: {stress_type} stress")
     ax.legend(fontsize=8)
     fig.tight_layout()

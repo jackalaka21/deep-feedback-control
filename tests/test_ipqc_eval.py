@@ -14,13 +14,19 @@ from scripts.evaluate_ipqc import (
 from scripts.train import load_config
 
 
-def episode_df(means):
-    """Build a raw-episode frame from {(stress_type, level, order): mean_return} (2 episodes each)."""
+def episode_df(means, dist_means=None):
+    """Build a raw-episode frame from {(stress_type, level, order): mean_return} (2 episodes each).
+
+    `dist_means` optionally gives the distance-only part of the return; by default it equals the total.
+    """
     rows = []
-    for (stress_type, level, order), mean in means.items():
+    for key, mean in means.items():
+        stress_type, level, order = key
+        dist_mean = mean if dist_means is None else dist_means[key]
         for ep, delta in enumerate((-1.0, 1.0)):
-            rows.append(dict(stress_type=stress_type, level=level, order=order, seed=0,
-                             episode=ep, episode_return=mean + delta))
+            rows.append(dict(stress_type=stress_type, level=level, order=order, seed=0, episode=ep,
+                             episode_return=mean + delta, distance_return=dist_mean + delta,
+                             control_return=mean - dist_mean))
     return pd.DataFrame(rows)
 
 
@@ -33,6 +39,31 @@ def test_summarize_normalizes_between_random_and_nominal():
     assert s.loc[("degradation", 1.0), "score"] == pytest.approx(1.0)
     assert s.loc[("degradation", 0.6), "score"] == pytest.approx(0.5)
     assert s.loc[("random", 0.0), "score"] == pytest.approx(0.0)
+
+
+def test_score_tracks_task_distance_and_total_score_tracks_total_return():
+    # Control cost shrinks under stress, so total return looks healthier than the task really is.
+    means = {**BASELINES, ("degradation", 0.5, 1): -10.0}
+    dist = {("random", 0.0, 0): -10.0, ("nominal", 0.0, 0): -4.0, ("degradation", 0.5, 1): -7.0}
+    s = summarize(episode_df(means, dist)).set_index(["stress_type", "level"])
+    assert s.loc[("degradation", 0.5), "score"] == pytest.approx((-7 + 10) / (-4 + 10))
+    assert s.loc[("degradation", 0.5), "total_score"] == pytest.approx((-10 + 40) / (-5 + 40))
+    assert s.loc[("degradation", 0.5), "mean_control_return"] == pytest.approx(-3.0)
+
+
+def test_score_can_go_negative_when_worse_than_random_at_the_task():
+    means = {**BASELINES, ("deadband", 0.5, 1): -20.0}
+    dist = {("random", 0.0, 0): -10.0, ("nominal", 0.0, 0): -4.0, ("deadband", 0.5, 1): -11.0}
+    s = summarize(episode_df(means, dist)).set_index(["stress_type", "level"])
+    assert s.loc[("deadband", 0.5), "score"] < 0
+
+
+def test_summarize_raises_when_task_performance_not_better_than_random():
+    # Total return is fine (nominal beats random) but the distance part is not.
+    means = {("random", 0.0, 0): -40.0, ("nominal", 0.0, 0): -5.0}
+    dist = {("random", 0.0, 0): -4.0, ("nominal", 0.0, 0): -10.0}
+    with pytest.raises(ValueError, match="Nominal return"):
+        summarize(episode_df(means, dist))
 
 
 def test_summarize_raises_when_nominal_not_better_than_random():
@@ -125,4 +156,19 @@ def test_sweep_covers_every_condition():
     expected = 2 + len(ip["degradation"]) + len(ip["latency_steps"]) + len(ip["deadband"])
     assert len(df) == expected
     assert set(df.stress_type) == {"random", "nominal", "degradation", "latency", "deadband"}
-    assert list(df.columns) == ["stress_type", "level", "order", "seed", "episode", "episode_return"]
+    assert list(df.columns) == ["stress_type", "level", "order", "seed", "episode",
+                                "episode_return", "distance_return", "control_return"]
+
+
+def test_episode_parts_split_total_into_distance_and_control():
+    pytest.importorskip("mujoco")
+    from envs import make_base_env
+    from scripts.evaluate_ipqc import RandomPolicy, run_episode_parts
+
+    env = make_base_env(load_config()["env_id"])
+    zero = run_episode_parts(env, ZeroModel(), seed=0)
+    assert zero["control_return"] == 0.0  # zero actions cost nothing
+    assert zero["distance_return"] == pytest.approx(zero["episode_return"])
+    rand = run_episode_parts(env, RandomPolicy(env.action_space, 0), seed=0)
+    assert rand["control_return"] < -5  # random torques are expensive
+    assert rand["distance_return"] + rand["control_return"] == pytest.approx(rand["episode_return"])

@@ -1,0 +1,22 @@
+# TD3 on Reacher: training hyperparameters and IPQC sweep settings.
+env_id: Reacher-v4          # falls back to Reacher-v5 if the installed Gymnasium dropped v4
+seed: 0
+total_timesteps: 150000
+learning_rate: 1.0e-3       # note: PyYAML needs the "1.0e-3" form to parse a float
+batch_size: 256
+buffer_size: 200000
+learning_starts: 5000
+device: cuda
+action_noise_sigma: 0.1
+model_path: models/reacher_td3
+wandb: false                # optional; needs `wandb login` done by the user
+wandb_project: deep-feedback-control
+
+ipqc:
+  # Each list is ordered from mildest to most severe.
+  degradation: [1.0, 0.8, 0.6, 0.4, 0.2]
+  latency_steps: [0, 1, 2, 3, 4, 5]
+  deadband: [0.0, 0.05, 0.1, 0.2, 0.3, 0.5]
+  episodes_per_seed: 20
+  seeds: [0, 1, 2]
+  retention_threshold: 0.9

@@ -23,8 +23,8 @@ Non-goals: hackathon matrix content, hosting/deployment, remote pushes, any Kagg
 
 ## 2. Environment and repository
 
-- Repo root: `C:\Users\User\OneDrive\Documents\Coding Projects\ai-engineering-portfolio`, with a local `git init` (no remote, no push).
-- Python 3.14 venv at `C:\Users\User\.venvs\ai_portfolio` (outside OneDrive). Python 3.12.0 was rejected: its `zipfile` bug makes SB3 model loading fail. PyTorch CUDA wheel from an index matching the installed driver (not necessarily `cu121`), then `gymnasium[mujoco]`, `stable-baselines3`, `torch-geometric`, `scikit-learn`, `pandas`, `matplotlib`, `pyyaml`, `wandb`, `pytest`.
+- Repo root: `<repo root>`, with a local `git init` (no remote, no push).
+- Python 3.14 venv at `<venv>` (outside OneDrive). Python 3.12.0 was rejected: its `zipfile` bug makes SB3 model loading fail. PyTorch CUDA wheel from an index matching the installed driver (not necessarily `cu121`), then `gymnasium[mujoco]`, `stable-baselines3`, `torch-geometric`, `scikit-learn`, `pandas`, `matplotlib`, `pyyaml`, `wandb`, `pytest`.
 - `requirements.txt` at the root lists all of these; the torch CUDA index URL is documented in the README.
 - `.gitignore`: `models/*.zip`, `*.pt`, `data/*.csv`, `plots/`, `wandb/`, `__pycache__`, venvs.
 - The dataset directory is configurable through `DATA_DIR` (default `unified-risk-engine/data/`) so the large CSVs can live outside OneDrive.
@@ -121,3 +121,4 @@ Non-goals: hackathon matrix content, hosting/deployment, remote pushes, any Kagg
 3. **Safety boundary metric (replaces "90% of nominal"):** Reacher returns are negative (about -5 when good, about -43 for a random policy), so a percentage of nominal return is ill-defined. Instead, each stress level gets a retention score `(R - R_random) / (R_nominal - R_random)`. The safety boundary is the most severe level reached before the score first drops below the threshold (0.9), scanning from mildest to most severe.
 4. **Plots:** the final `degradation_curve.png`, `latency_curve.png`, `deadband_curve.png`, `training_curve.png` and `ipqc_results.csv` are committed so the README can show them. Quick-mode outputs go to `plots/quick/` (ignored). Trained model files stay ignored.
 5. **Evaluation device:** IPQC episodes run the policy on CPU (single-observation inference is faster there); training uses CUDA.
+6. **Retention is scored on task performance, not total reward (supersedes the metric in 7.3; found in final review).** Reacher's reward is `reward_dist + reward_ctrl`, and the control cost is charged on the action the motors actually receive. Deadband and degradation shrink actions, so they also shrink the control cost, and 77% of a random policy's deficit is control cost. Scoring total reward therefore flattered those stresses (for example, deadband 0.5 scored 0.815 while the arm was worse than random at reaching the target). The retention score `(R - R_random) / (R_nominal - R_random)` now uses `R = -sum(distance to target)` (`score`) and drives the safety boundaries; the full-reward version is kept as `total_score`, with `mean_control_return` per level, in `ipqc_results.csv`.

@@ -206,7 +206,7 @@ def main(argv=None) -> None:
 
     matplotlib.use("Agg")
     p = argparse.ArgumentParser(description="IPQC stress test for a trained Reacher TD3 policy.")
-    p.add_argument("--config", default=None)
+    p.add_argument("--config", default=None, help="config path (relative paths resolve against the project root)")
     p.add_argument("--model-path", default=None)
     p.add_argument("--episodes", type=int, default=None, help="episodes per seed")
     p.add_argument("--seeds", type=int, nargs="+", default=None)

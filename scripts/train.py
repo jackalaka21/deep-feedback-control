@@ -28,10 +28,12 @@ REQUIRED_KEYS = (
 REQUIRED_IPQC_KEYS = (
     "degradation", "latency_steps", "deadband", "episodes_per_seed", "seeds", "retention_threshold",
 )
+VALID_ALGOS = ("td3", "ddpg")
+STRESS_LIST_KEYS = ("degradation", "latency_steps", "deadband", "seeds")
 
 
 def load_config(path=None) -> dict:
-    path = Path(path) if path else DEFAULT_CONFIG
+    path = resolve_path(path) if path else DEFAULT_CONFIG
     with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     missing = [k for k in REQUIRED_KEYS if k not in cfg]
@@ -40,6 +42,20 @@ def load_config(path=None) -> dict:
     missing_ipqc = [k for k in REQUIRED_IPQC_KEYS if k not in cfg["ipqc"]]
     if missing_ipqc:
         raise ValueError(f"{path} is missing required ipqc keys: {missing_ipqc}")
+    cfg.setdefault("algo", "td3")
+    cfg.setdefault("ddpg_model_path", "models/reacher_ddpg")
+    cfg.setdefault("success_radius", 0.05)
+    if cfg["algo"] not in VALID_ALGOS:
+        raise ValueError(f"algo must be one of {VALID_ALGOS}, got {cfg['algo']!r}")
+    if not isinstance(cfg["learning_rate"], float):
+        raise ValueError(
+            f"learning_rate must be a float, got {cfg['learning_rate']!r}; "
+            "write 1.0e-3 (PyYAML reads 1e-3 as a string)"
+        )
+    for key in STRESS_LIST_KEYS:
+        values = cfg["ipqc"][key]
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"ipqc.{key} must be a non-empty list, got {values!r}")
     return cfg
 
 
@@ -52,7 +68,8 @@ def resolve_device(requested: str) -> str:
     if requested.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError(
             f"Config requests device '{requested}' but CUDA is not available. "
-            "Re-run with --device cpu, or fix the PyTorch CUDA install."
+            "Re-run with --device cpu, set `device: cpu` in configs/td3_config.yaml, "
+            "or fix the PyTorch CUDA install."
         )
     return requested
 
@@ -140,15 +157,21 @@ def train(
     return TrainResult(model, model_path, monitor_path)
 
 
-def main(argv=None) -> None:
-    p = argparse.ArgumentParser(description="Train TD3 on Reacher.")
-    p.add_argument("--config", default=None)
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Train TD3 or DDPG on Reacher.")
+    p.add_argument("--config", default=None, help="config path (relative paths resolve against the project root)")
     p.add_argument("--timesteps", type=int, default=None)
     p.add_argument("--learning-starts", type=int, default=None)
     p.add_argument("--device", default=None)
     p.add_argument("--model-path", default=None)
-    p.add_argument("--wandb", action="store_true", default=None)
-    args = p.parse_args(argv)
+    p.add_argument("--algo", choices=VALID_ALGOS, default=None)
+    p.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=None,
+                   help="force W&B logging on or off (default: the config value)")
+    return p
+
+
+def main(argv=None) -> None:
+    args = build_parser().parse_args(argv)
 
     cfg = load_config(args.config)
     res = train(

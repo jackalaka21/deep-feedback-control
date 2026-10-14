@@ -9,6 +9,9 @@ learning_starts: 5000
 device: cuda
 action_noise_sigma: 0.1
 model_path: models/reacher_td3
+algo: td3                   # td3 or ddpg
+ddpg_model_path: models/reacher_ddpg
+success_radius: 0.05        # metres: an episode "succeeds" if the fingertip ends this close to the target
 wandb: false                # optional; needs `wandb login` done by the user
 wandb_project: deep-feedback-control
 

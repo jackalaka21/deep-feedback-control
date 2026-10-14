@@ -59,3 +59,65 @@ def test_wandb_logger_logs_mean_episode_return():
     cb.n_calls, cb.num_timesteps = 1, 100
     assert cb._on_step() is True
     assert logged == [({"train/ep_rew_mean": -4.0}, 100)]
+
+
+import yaml  # noqa: E402
+
+from scripts.train import build_parser  # noqa: E402
+
+
+def write_config(tmp_path, **overrides):
+    cfg = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    cfg.update(overrides)
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def test_config_defaults_to_td3_with_success_radius():
+    cfg = load_config()
+    assert cfg["algo"] == "td3"
+    assert cfg["success_radius"] == 0.05
+    assert cfg["ddpg_model_path"] == "models/reacher_ddpg"
+
+
+def test_load_config_rejects_unknown_algo(tmp_path):
+    with pytest.raises(ValueError, match="algo"):
+        load_config(write_config(tmp_path, algo="sac"))
+
+
+def test_load_config_rejects_string_learning_rate(tmp_path):
+    path = tmp_path / "cfg.yaml"
+    text = DEFAULT_CONFIG.read_text(encoding="utf-8").replace("learning_rate: 1.0e-3", "learning_rate: 1e-3")
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="learning_rate"):
+        load_config(path)
+
+
+def test_load_config_rejects_empty_stress_list(tmp_path):
+    cfg = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    cfg["ipqc"]["latency_steps"] = []
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    with pytest.raises(ValueError, match="latency_steps"):
+        load_config(path)
+
+
+def test_relative_config_path_resolves_against_project_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert load_config("configs/td3_config.yaml")["env_id"].startswith("Reacher")
+
+
+def test_cuda_error_mentions_config_option(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="device: cpu"):
+        resolve_device("cuda")
+
+
+def test_parser_wandb_tristate_and_algo():
+    parser = build_parser()
+    assert parser.parse_args([]).wandb is None
+    assert parser.parse_args(["--wandb"]).wandb is True
+    assert parser.parse_args(["--no-wandb"]).wandb is False
+    assert parser.parse_args(["--algo", "ddpg"]).algo == "ddpg"
+    assert parser.parse_args([]).algo is None

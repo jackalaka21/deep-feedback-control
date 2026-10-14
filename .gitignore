@@ -16,3 +16,6 @@ plots/quick/
 # tooling
 wandb/
 .superpowers/
+
+# sweep outputs (raw runs and TensorBoard logs; aggregated CSV/PNG results live in plots/)
+runs/

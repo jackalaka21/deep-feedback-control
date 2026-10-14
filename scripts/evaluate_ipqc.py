@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from envs import make_stressed_env  # noqa: E402
-from scripts.train import load_config, model_file, resolve_path  # noqa: E402
+from scripts.train import default_model_path, load_config, model_file, resolve_path  # noqa: E402
 
 STRESS_KWARG = {"degradation": "degradation", "latency": "delay_steps", "deadband": "deadband"}
 CONFIG_KEY = {"degradation": "degradation", "latency": "latency_steps", "deadband": "deadband"}
@@ -64,16 +64,18 @@ def run_episode(env, policy, seed=None) -> float:
     return run_episode_parts(env, policy, seed)["episode_return"]
 
 
-def load_policy(model_path, device: str = "cpu"):
-    from stable_baselines3 import TD3
+def load_policy(model_path, device: str = "cpu", algo: str = "td3"):
+    from scripts.train import ALGOS
 
+    if algo not in ALGOS:
+        raise ValueError(f"algo must be one of {tuple(ALGOS)}, got {algo!r}")
     f = model_file(resolve_path(model_path))
     if not f.exists():
         raise FileNotFoundError(
             f"No trained model at {f}. Train one first: `python scripts/train.py` "
             "(or run notebook 01_train_td3.ipynb)."
         )
-    return TD3.load(str(f), device=device)
+    return ALGOS[algo].load(str(f), device=device)
 
 
 def _conditions(ipqc: dict):
@@ -205,16 +207,18 @@ def main(argv=None) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
-    p = argparse.ArgumentParser(description="IPQC stress test for a trained Reacher TD3 policy.")
+    p = argparse.ArgumentParser(description="IPQC stress test for a trained Reacher TD3 or DDPG policy.")
     p.add_argument("--config", default=None, help="config path (relative paths resolve against the project root)")
     p.add_argument("--model-path", default=None)
+    p.add_argument("--algo", choices=("td3", "ddpg"), default=None)
     p.add_argument("--episodes", type=int, default=None, help="episodes per seed")
     p.add_argument("--seeds", type=int, nargs="+", default=None)
     p.add_argument("--out", default="plots")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
-    model = load_policy(args.model_path or cfg["model_path"])
+    algo = args.algo or cfg["algo"]
+    model = load_policy(args.model_path or default_model_path(cfg, algo), algo=algo)
     raw = run_ipqc_sweep(model, cfg, episodes_per_seed=args.episodes, seeds=args.seeds)
     summary = summarize(raw)
     threshold = cfg["ipqc"]["retention_threshold"]

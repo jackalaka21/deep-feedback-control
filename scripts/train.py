@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import yaml  # noqa: E402
-from stable_baselines3 import TD3  # noqa: E402
+from stable_baselines3 import DDPG, TD3  # noqa: E402
 from stable_baselines3.common.callbacks import BaseCallback  # noqa: E402
 from stable_baselines3.common.monitor import Monitor  # noqa: E402
 from stable_baselines3.common.noise import NormalActionNoise  # noqa: E402
@@ -29,6 +29,7 @@ REQUIRED_IPQC_KEYS = (
     "degradation", "latency_steps", "deadband", "episodes_per_seed", "seeds", "retention_threshold",
 )
 VALID_ALGOS = ("td3", "ddpg")
+ALGOS = {"td3": TD3, "ddpg": DDPG}
 STRESS_LIST_KEYS = ("degradation", "latency_steps", "deadband", "seeds")
 
 
@@ -95,9 +96,36 @@ class WandbEpisodeLogger(BaseCallback):
         return True
 
 
+def default_model_path(cfg: dict, algo: str) -> str:
+    return cfg["ddpg_model_path"] if algo == "ddpg" else cfg["model_path"]
+
+
+def build_model(cfg, env, algo, device, learning_starts, seed=None, verbose=1, tensorboard_log=None):
+    """One place that builds TD3 or DDPG with identical hyperparameters."""
+    if algo not in ALGOS:
+        raise ValueError(f"algo must be one of {VALID_ALGOS}, got {algo!r}")
+    n_actions = env.action_space.shape[-1]
+    noise = NormalActionNoise(
+        mean=np.zeros(n_actions), sigma=cfg["action_noise_sigma"] * np.ones(n_actions)
+    )
+    return ALGOS[algo](
+        "MlpPolicy",
+        env,
+        action_noise=noise,
+        learning_rate=cfg["learning_rate"],
+        batch_size=cfg["batch_size"],
+        buffer_size=cfg["buffer_size"],
+        learning_starts=learning_starts,
+        device=device,
+        seed=cfg["seed"] if seed is None else seed,
+        verbose=verbose,
+        tensorboard_log=tensorboard_log,
+    )
+
+
 @dataclass
 class TrainResult:
-    model: TD3
+    model: object  # a stable-baselines3 TD3 or DDPG
     model_path: Path
     monitor_path: Path
 
@@ -110,7 +138,11 @@ def train(
     device: str | None = None,
     use_wandb: bool | None = None,
     verbose: int = 1,
+    algo: str | None = None,
 ) -> TrainResult:
+    algo = algo or cfg["algo"]
+    if algo not in ALGOS:
+        raise ValueError(f"algo must be one of {VALID_ALGOS}, got {algo!r}")
     device = resolve_device(device or cfg["device"])
     timesteps = int(timesteps or cfg["total_timesteps"])
     start = learning_starts if learning_starts is not None else cfg["learning_starts"]
@@ -119,27 +151,12 @@ def train(
             f"timesteps ({timesteps}) must exceed learning_starts ({start}), otherwise no gradient "
             "updates run and the saved model is untrained. Raise --timesteps or lower --learning-starts."
         )
-    model_path = resolve_path(model_path or cfg["model_path"])
+    model_path = resolve_path(model_path or default_model_path(cfg, algo))
     model_path.parent.mkdir(parents=True, exist_ok=True)
     monitor_path = model_path.with_name(model_path.name + ".monitor.csv")
 
     env = Monitor(make_base_env(cfg["env_id"]), filename=str(monitor_path))
-    n_actions = env.action_space.shape[-1]
-    noise = NormalActionNoise(
-        mean=np.zeros(n_actions), sigma=cfg["action_noise_sigma"] * np.ones(n_actions)
-    )
-    model = TD3(
-        "MlpPolicy",
-        env,
-        action_noise=noise,
-        learning_rate=cfg["learning_rate"],
-        batch_size=cfg["batch_size"],
-        buffer_size=cfg["buffer_size"],
-        learning_starts=learning_starts if learning_starts is not None else cfg["learning_starts"],
-        device=device,
-        seed=cfg["seed"],
-        verbose=verbose,
-    )
+    model = build_model(cfg, env, algo, device, start, verbose=verbose)
 
     callback, run = None, None
     if use_wandb if use_wandb is not None else cfg.get("wandb", False):
@@ -181,6 +198,7 @@ def main(argv=None) -> None:
         model_path=args.model_path,
         device=args.device,
         use_wandb=args.wandb,
+        algo=args.algo,
     )
     print(f"device={res.model.device}  saved={model_file(res.model_path)}")
     if res.model.device.type == "cuda":

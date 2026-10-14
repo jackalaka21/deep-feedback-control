@@ -96,6 +96,12 @@ def train(
 ) -> TrainResult:
     device = resolve_device(device or cfg["device"])
     timesteps = int(timesteps or cfg["total_timesteps"])
+    start = learning_starts if learning_starts is not None else cfg["learning_starts"]
+    if start >= timesteps:
+        raise ValueError(
+            f"timesteps ({timesteps}) must exceed learning_starts ({start}), otherwise no gradient "
+            "updates run and the saved model is untrained. Raise --timesteps or lower --learning-starts."
+        )
     model_path = resolve_path(model_path or cfg["model_path"])
     model_path.parent.mkdir(parents=True, exist_ok=True)
     monitor_path = model_path.with_name(model_path.name + ".monitor.csv")

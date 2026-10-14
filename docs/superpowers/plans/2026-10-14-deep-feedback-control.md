@@ -14,15 +14,15 @@
 
 ## Global Constraints
 
-- Repo root: `C:\Users\User\OneDrive\Documents\Coding Projects\ai-engineering-portfolio`. Project 1 lives in `deep-feedback-control/`.
-- Python 3.14 venv at `C:\Users\User\.venvs\ai_portfolio` (outside OneDrive; 3.12.0 was rejected because its `zipfile` bug breaks SB3 model loading). In bash calls use `PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"`, set again in every call.
+- Repo root: `<repo root>`. Project 1 lives in `deep-feedback-control/`.
+- Python 3.14 venv at `<venv>` (outside OneDrive; 3.12.0 was rejected because its `zipfile` bug breaks SB3 model loading). In bash calls use `PY="<venv>/Scripts/python.exe"`, set again in every call.
 - TD3 config values: learning rate `1e-3`, batch size `256`, device `cuda`, `150000` timesteps, action-noise sigma `0.1`.
 - Env id `Reacher-v4`; if the installed Gymnasium no longer provides it, fall back to `Reacher-v5` with a warning and record that in the README.
 - Actuator deadband threshold `0.05` (components with |a| < 0.05 are zeroed). Motor degradation levels `1.0, 0.8, 0.6, 0.4` (plus `0.2`). Latency `0` to `5` steps.
 - Safety boundary = most severe stress level reached before the retention score `(R - R_random) / (R_nominal - R_random)` first drops below `0.9` (spec section 7.3).
 - W&B is optional and OFF by default. Never log in to W&B or any service on the user's behalf.
 - Plots written by scripts and notebooks: `plots/degradation_curve.png`, `plots/latency_curve.png`, `plots/deadband_curve.png`, `plots/ipqc_results.csv`, `plots/training_curve.png`. Quick-mode outputs go to `plots/quick/` and `models/*_quick*` (git-ignored).
-- Do NOT push to GitHub without asking the user first (the remote is `jackalaka21/ai-engineering-portfolio`, private; pushing needs the `jackalaka21` token, not the default gh account).
+- Do NOT push to a remote without asking the user first.
 - End every commit message with the trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>` (second `-m` argument).
 - All paths used by scripts are resolved relative to the project root, never the current working directory.
 
@@ -41,7 +41,7 @@ Failure modes the spec implies but a first implementation would likely miss, mos
 ## File Structure
 
 ```
-ai-engineering-portfolio/
+deep-feedback-control/   (repo root; originally nested one level down, see the repo note at the top)
 ├── .gitignore                         (Task 1)
 ├── requirements.txt                   (Task 1)
 ├── README.md                          (Task 6)
@@ -74,13 +74,13 @@ ai-engineering-portfolio/
 - Create: `.gitignore`, `requirements.txt`, `deep-feedback-control/{conftest.py,pytest.ini,models/.gitkeep}`
 
 **Interfaces:**
-- Produces: a working interpreter at `C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe` with CUDA PyTorch, MuJoCo Reacher, SB3, pytest and a registered Jupyter kernel named `ai_portfolio`.
+- Produces: a working interpreter at `<venv>/Scripts/python.exe` with CUDA PyTorch, MuJoCo Reacher, SB3, pytest and a registered Jupyter kernel named `ai_portfolio`.
 
 - [ ] **Step 1: Create the venv**
 
 ```bash
-py -3.14 -m venv "C:/Users/User/.venvs/ai_portfolio"
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+py -3.14 -m venv "<venv>"
+PY="<venv>/Scripts/python.exe"
 "$PY" -m pip install --upgrade pip
 "$PY" --version
 ```
@@ -89,7 +89,7 @@ Expected: `Python 3.14.x`.
 - [ ] **Step 2: Install CUDA PyTorch**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+PY="<venv>/Scripts/python.exe"
 nvidia-smi | head -5   # note the "CUDA Version" the driver supports
 "$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
@@ -98,7 +98,7 @@ If no matching wheel is found, try `cu126`, then `cu130`, choosing one not newer
 - [ ] **Step 3: Verify the GPU is visible**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+PY="<venv>/Scripts/python.exe"
 "$PY" -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 Expected: `... True NVIDIA GeForce RTX 3070 Ti Laptop GPU`. If `False`, stop and fix the install (wrong index or old driver) before continuing.
@@ -126,7 +126,7 @@ pytest
 - [ ] **Step 5: Install the rest and register the kernel**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+PY="<venv>/Scripts/python.exe"
 "$PY" -m pip install -r requirements.txt
 "$PY" -m ipykernel install --user --name ai_portfolio --display-name "Python (ai_portfolio)"
 ```
@@ -135,7 +135,7 @@ Expected: installs without error; `Installed kernelspec ai_portfolio ...`.
 - [ ] **Step 6: Verify MuJoCo Reacher works headlessly**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+PY="<venv>/Scripts/python.exe"
 "$PY" -c "
 import gymnasium as gym
 for env_id in ('Reacher-v4', 'Reacher-v5'):
@@ -357,7 +357,7 @@ def test_nominal_stressed_env_matches_base_env():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest tests/test_stress_wrappers.py -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest tests/test_stress_wrappers.py -q
 ```
 Expected: collection error `ImportError: cannot import name 'ActuatorDeadband' from 'envs'` (or `No module named 'envs'`).
 
@@ -481,7 +481,7 @@ __all__ = [
 - [ ] **Step 4: Run to verify pass**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest tests/test_stress_wrappers.py -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest tests/test_stress_wrappers.py -q
 ```
 Expected: all pass (the Reacher test is skipped only if `mujoco` is missing, which it should not be).
 
@@ -635,7 +635,7 @@ def test_train_cuda_smoke(tmp_path):
 - [ ] **Step 4: Run to verify failure**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest tests/test_train_config.py tests/test_dfc_smoke.py -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest tests/test_train_config.py tests/test_dfc_smoke.py -q
 ```
 Expected: `ModuleNotFoundError: No module named 'scripts'` (or import error for `scripts.train`).
 
@@ -809,14 +809,14 @@ if __name__ == "__main__":
 - [ ] **Step 6: Run to verify pass**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest tests/test_train_config.py tests/test_dfc_smoke.py -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest tests/test_train_config.py tests/test_dfc_smoke.py -q
 ```
 Expected: all pass, including the CUDA smoke test.
 
 - [ ] **Step 7: The playbook's dry run: 1,000 steps on the GPU**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" scripts/train.py --timesteps 1000 --learning-starts 100 --model-path models/dryrun
+cd deep-feedback-control && "<venv>/Scripts/python.exe" scripts/train.py --timesteps 1000 --learning-starts 100 --model-path models/dryrun
 ```
 Expected final lines: `device=cuda:0  saved=...models\dryrun.zip` and a `cuda memory allocated: ...` line. (`models/dryrun*` is git-ignored.)
 
@@ -962,7 +962,7 @@ def test_sweep_covers_every_condition():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest tests/test_ipqc_eval.py -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest tests/test_ipqc_eval.py -q
 ```
 Expected: `ModuleNotFoundError: No module named 'scripts.evaluate_ipqc'`.
 
@@ -1170,7 +1170,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run to verify pass**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest -q
 ```
 Expected: the whole suite passes (wrappers, config, smoke, eval).
 
@@ -1179,7 +1179,7 @@ Expected: the whole suite passes (wrappers, config, smoke, eval).
 The 1,000-step dry-run model is far from trained, so scoring may legitimately raise the "not better than random" error. Either outcome is informative:
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" scripts/evaluate_ipqc.py --model-path models/dryrun --episodes 2 --seeds 0 --out plots/quick
+cd deep-feedback-control && "<venv>/Scripts/python.exe" scripts/evaluate_ipqc.py --model-path models/dryrun --episodes 2 --seeds 0 --out plots/quick
 ```
 Expected: either a printed summary plus `Wrote plots ...` (and three PNGs in `plots/quick/`), or `ValueError: Nominal return (...) is not better than the random policy (...)`. Both prove the pipeline runs; a Python traceback of any other kind is a bug to fix.
 
@@ -1196,7 +1196,7 @@ git commit -m "feat: add IPQC sweep, retention scoring, safety boundary and plot
 
 **Files:**
 - Create: `deep-feedback-control/notebooks/01_train_td3.ipynb`, `deep-feedback-control/notebooks/02_ipqc_stress_test.ipynb`
-- Generator (throwaway, not committed): `C:\Users\User\AppData\Local\Temp\claude\C--Users-User-OneDrive-Documents-Coding-Projects\dca33f4e-a625-4047-b9d5-f0ead89624b3\scratchpad\build_notebooks.py`
+- Generator (throwaway, not committed): `<scratchpad>\build_notebooks.py`
 
 **Interfaces:**
 - Consumes: `scripts.train.{load_config, train, model_file, resolve_device}`, `scripts.evaluate_ipqc.{run_episode, RandomPolicy, load_policy, run_ipqc_sweep, summarize, save_report, describe_boundary, STRESS_FILE}`, `envs.make_base_env`.
@@ -1208,7 +1208,7 @@ git commit -m "feat: add IPQC sweep, retention scoring, safety boundary and plot
 import nbformat as nbf
 from pathlib import Path
 
-NB_DIR = Path(r"C:\Users\User\OneDrive\Documents\Coding Projects\ai-engineering-portfolio\deep-feedback-control\notebooks")
+NB_DIR = Path(r"<repo root>\deep-feedback-control\notebooks")
 NB_DIR.mkdir(exist_ok=True)
 
 SETUP = '''import os
@@ -1340,15 +1340,15 @@ print("notebooks written")
 - [ ] **Step 2: Generate the notebooks**
 
 ```bash
-"C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" "C:/Users/User/AppData/Local/Temp/claude/C--Users-User-OneDrive-Documents-Coding-Projects/dca33f4e-a625-4047-b9d5-f0ead89624b3/scratchpad/build_notebooks.py"
+"<venv>/Scripts/python.exe" "<scratchpad>/build_notebooks.py"
 ```
 Expected: `notebooks written`.
 
 - [ ] **Step 3: Smoke-execute both notebooks in quick mode (copies go to scratch, originals stay clean)**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
-OUT="C:/Users/User/AppData/Local/Temp/claude/C--Users-User-OneDrive-Documents-Coding-Projects/dca33f4e-a625-4047-b9d5-f0ead89624b3/scratchpad/nbout"
+PY="<venv>/Scripts/python.exe"
+OUT="<scratchpad>/nbout"
 cd deep-feedback-control
 for nb in 01_train_td3 02_ipqc_stress_test; do
   DFC_QUICK=1 "$PY" -m jupyter nbconvert --to notebook --execute \
@@ -1384,14 +1384,14 @@ git commit -m "feat: add training and IPQC stress-test notebooks" -m "Co-Authore
 - [ ] **Step 1: Full test suite**
 
 ```bash
-cd deep-feedback-control && "C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe" -m pytest -q
+cd deep-feedback-control && "<venv>/Scripts/python.exe" -m pytest -q
 ```
 Expected: all pass.
 
 - [ ] **Step 2: Execute both notebooks for real (150k steps, full sweep), in place**
 
 ```bash
-PY="C:/Users/User/.venvs/ai_portfolio/Scripts/python.exe"
+PY="<venv>/Scripts/python.exe"
 cd deep-feedback-control
 for nb in 01_train_td3 02_ipqc_stress_test; do
   "$PY" -m jupyter nbconvert --to notebook --execute --inplace \
@@ -1437,4 +1437,4 @@ git commit -m "docs: add Project 1 results, executed notebooks and READMEs" -m "
 
 - [ ] **Step 7: Ask the user before pushing**
 
-Report what ran and what the numbers are, then ask whether to push to `jackalaka21/ai-engineering-portfolio` (use `GH_TOKEN="$(gh auth token --user jackalaka21)" git push`).
+Report what ran and what the numbers are, then ask whether to push to the remote.

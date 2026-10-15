@@ -103,3 +103,61 @@ def test_compare_algos_reports_td3_minus_ddpg_with_interval(tmp_path):
     diff = compare_algos(per_run).set_index("variant").loc["default"]
     assert diff["diff_mean"] == pytest.approx(np.mean([-3.0, -3.2, -3.1]) - np.mean([-7.0, -6.0, -5.0]))
     assert diff["diff_lo"] > 0  # TD3 clearly better in this fabricated data
+
+
+import json  # noqa: E402
+
+import matplotlib.pyplot as plt  # noqa: E402
+
+from scripts.sweep_analysis import (  # noqa: E402
+    bootstrap_band,
+    plot_learning_curves,
+    plot_metric_comparison,
+    write_sweep_outputs,
+)
+
+
+def test_bootstrap_band_shapes_and_ordering():
+    m = np.array([[-5.0, -4.0], [-6.0, -3.0], [-4.0, -3.5]])
+    mean, lo, hi = bootstrap_band(m)
+    assert mean.shape == lo.shape == hi.shape == (2,)
+    assert np.all(lo <= mean + 1e-9) and np.all(mean <= hi + 1e-9)
+    assert mean == pytest.approx(m.mean(axis=0))
+
+
+def grid_runs():
+    runs = []
+    for algo, base in (("td3", -3.0), ("ddpg", -6.0)):
+        for variant in ("default", "sparse"):
+            for seed in range(3):
+                shift = (1.0 if variant == "sparse" else 0.0) + 0.1 * seed
+                runs.append((algo, variant, seed, [-9, -7, base - shift, base - shift], [0, 0.1, 0.5, 0.6]))
+    return runs
+
+
+def test_plots_render_without_error(tmp_path):
+    make_fake_runs(tmp_path, grid_runs())
+    curves = load_eval_curves(tmp_path)
+    fig = plot_learning_curves(curves, -10.0, -4.0)
+    assert len(fig.axes) >= 2  # one panel per variant (+ legend)
+    plt.close(fig)
+    summary = summarize_runs(per_run_table(curves, -4.0))
+    fig = plot_metric_comparison(summary)
+    assert len(fig.axes) == 3
+    plt.close(fig)
+
+
+def test_write_sweep_outputs_creates_every_file(tmp_path):
+    runs = make_fake_runs(tmp_path / "runs", grid_runs())
+    paths = write_sweep_outputs(runs, tmp_path / "out", -4.0)
+    expected = {"sweep_eval_curves.csv", "sweep_per_run.csv", "sweep_summary.csv",
+                "sweep_algo_differences.csv", "sweep_random_baseline.json",
+                "sweep_learning_curves.png", "sweep_metric_comparison.png"}
+    assert {p.name for p in paths.values()} == expected
+    assert all(p.stat().st_size > 0 for p in paths.values())
+    curves = pd.read_csv(tmp_path / "out" / "sweep_eval_curves.csv")
+    assert set(curves["algo"]) == {"td3", "ddpg"} and len(curves) == 12 * 4
+    summary = pd.read_csv(tmp_path / "out" / "sweep_summary.csv")
+    assert {"final_return_mean", "final_return_lo", "final_return_hi", "n_reached"} <= set(summary.columns)
+    base = json.loads((tmp_path / "out" / "sweep_random_baseline.json").read_text(encoding="utf-8"))
+    assert base["mean_distance_return"] == -10.0

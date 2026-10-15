@@ -33,7 +33,7 @@ Non-goals: new tasks (push, slide, 7-DOF), SAC, HER, TD3-component ablations, le
 | `default` | `reward_dist + reward_ctrl` (unchanged) | the reference |
 | `dist_only` | `reward_dist` | removing the control penalty |
 | `sparse` | `0` if `d <= success_radius` else `-1` | sparse reward, no shaping signal |
-| `progress` | `10 * (d_prev - d) + reward_ctrl`; `d_prev` is the previous step's distance, and the first step of an episode gets progress 0 | potential-based progress shaping (gamma = 1) |
+| `progress` | `10 * (distance before the step - distance after the step) + reward_ctrl`, with the distance read from the simulator state (`get_body_com`), starting from the reset state | potential-based progress shaping (gamma = 1). *Amended after review:* the first version used `info["reward_dist"]`, which Reacher-v4 computes before the simulation step, so each action was credited with the previous action's movement. |
 | `scaled_x10` | `10 * (reward_dist + reward_ctrl)` | reward magnitude |
 
 The wrapper changes only what the agent trains on. Observations, termination and `info` pass through.
@@ -65,7 +65,7 @@ Per run, from `eval.csv`:
 - `final_return`: mean of the last 3 evaluations. `final_success`: same for `success_rate`.
 - `auc`: mean return over all evaluations (sample efficiency).
 - `steps_to_threshold`: first evaluation step with mean return >= `solve_threshold` (NaN if never).
-- `max_drawdown`: largest drop from a running maximum (instability).
+- `max_drawdown`: largest drop from a running maximum (instability), computed only over evaluations after `learning_starts` (*amended after review:* evaluations before learning starts score the same untrained policy, and the first evaluation after learning begins often dips, which is not instability during learning).
 
 Per (algo, variant), across seeds: mean of each metric with a **95% bootstrap CI** (`bootstrap_ci`: resample seeds with replacement, 10,000 draws, percentile interval; crude with 5 seeds, and said so), and the number of seeds that reached the threshold.
 `compare_algos` gives, per variant, the TD3 minus DDPG difference in `final_return` with a bootstrap CI (unpaired resampling of each algo's seeds).
@@ -117,3 +117,11 @@ Question: does the reward a policy was trained on change its safety boundaries?
 - Benchmark parallel throughput first (workers vs steps/s) to confirm or correct the time estimate.
 - Quick sweep smoke test, then the full 50-run sweep, resumable, then the robustness run, then regenerate the analysis and notebook 03.
 - Check README claims against the CSVs before committing. Report exactly what was and was not run. Do not push without asking.
+
+## 12. Amendments after the final review (2026-10-15)
+
+1. `progress` reward measured from the simulator state after the step (section 3); the 10 `progress` runs were re-run. It still failed, so the original misalignment was not the main cause.
+2. Drawdown computed after `learning_starts` (section 6). The earlier all-evaluation version reversed the TD3-vs-DDPG stability comparison.
+3. `done.json` and `random_baseline.json` record the evaluation/training protocol; the sweep refuses to resume next to finished runs with a different protocol, and recomputes a baseline whose protocol changed. Runs finished before protocols were recorded are accepted.
+4. Boundary summaries report the median (levels are ordinal and censored) next to the mean.
+5. Scope note: all results use `Reacher-v4`. Its reward is computed before the action is applied, so the distance metrics and the success check use the pre-action distance. A port to `Reacher-v5` (reward after the action) is a planned follow-up, with results kept separate.

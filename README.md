@@ -55,34 +55,40 @@ Both scores are kept in the CSV (`total_score` and `score`); the boundaries use 
 
 ## Reward shaping and learning stability: TD3 vs DDPG
 
-Does the reward a policy *trains on* change how stably it learns, and how it copes with failures? I trained **TD3 and DDPG with identical hyperparameters** (learning rate 1e-3, batch 256, noise sigma 0.1) on five reward variants, 5 seeds each, 40,000 steps per run: **50 runs** on 8 parallel CPU processes (2 h 53 min wall-clock).
+Does the reward a policy *trains on* change how stably it learns, and how it copes with failures? I trained **TD3 and DDPG with identical hyperparameters** (learning rate 1e-3, batch 256, noise sigma 0.1) on five reward variants, 5 seeds each, 40,000 steps per run: **50 runs** on 8 parallel CPU processes (about 3 hours of wall-clock). All results are on `Reacher-v4`.
 
 | Variant | Training reward per step |
 |---|---|
 | `default` | `-distance - action^2` (Reacher's own reward) |
 | `dist_only` | `-distance` (no control penalty) |
 | `sparse` | `0` within 5 cm of the target, else `-1` |
-| `progress` | `10 x (previous distance - distance) - action^2` |
+| `progress` | `10 x (distance before the step - distance after the step) - action^2`, distance measured from the simulator state |
 | `scaled_x10` | `10 x default` |
 
-**Fair evaluation.** Shaped training returns are not comparable, so every run is evaluated on a separate *unshaped* environment (fixed targets, deterministic policy, 10 episodes every 2,000 steps) with two metrics: **task return** (minus summed distance to the target, higher is better) and **success rate** (fingertip within 5 cm at the end of the episode). Each evaluation reflects the model before that episode's final gradient updates, a consistent one-episode lag across all runs.
+**Fair evaluation.** Shaped training returns are not comparable, so every run is evaluated on a separate *unshaped* environment (fixed targets, deterministic policy, 10 episodes every 2,000 steps) with two metrics: **task return** (minus the summed distance to the target, higher is better) and **success rate** (distance to the target at most 5 cm at the end of the episode).
+
+Two conventions to know:
+- `Reacher-v4` computes its reward from the fingertip distance *before* the action is applied, so the task return is the sum of pre-action distances and the success check uses the distance before the episode's final action. (v5 computes it after; porting to v5 is a planned follow-up.)
+- Each evaluation reflects the model one gradient update before the next environment step, a consistent one-update lag; the saved `final_model.zip` includes that last update.
+
+The 10 `progress` runs were re-run after a bug fix (see below), so they were produced by a later commit than the other 40.
 
 ![Learning curves](plots/sweep_learning_curves.png)
 
-Means over 5 seeds with 95% bootstrap CIs (crude with 5 seeds). "Steps to threshold" is the mean over the seeds that reached a task return of -4.0 during training.
+Means over 5 seeds with 95% bootstrap CIs (crude with 5 seeds). "Steps to threshold" is the mean over the seeds that reached a task return of -4.0 during training. "Max drawdown" is the largest drop from a running maximum of the task return, computed over evaluations after learning starts (step 5,000); lower is steadier.
 
-| Algo | Reward variant | Final task return [95% CI] | Final success rate | Steps to threshold | Max drawdown | Seeds that reached -4.0 |
+| Algo | Reward variant | Final task return [95% CI] | Final success rate | Steps to threshold | Max drawdown [95% CI] | Seeds that reached -4.0 |
 |---|---|---|---|---|---|---|
-| DDPG | `default` | -3.73 [-3.88, -3.59] | 0.79 | 26,000 | 1.17 | 5/5 |
-| DDPG | `dist_only` | -3.12 [-3.58, -2.52] | 0.68 | 21,600 | 1.34 | 5/5 |
-| DDPG | `sparse` | -3.03 [-3.43, -2.71] | 0.83 | 23,200 | 1.43 | 5/5 |
-| DDPG | `progress` | -7.50 [-8.42, -6.68] | 0.14 | never | 4.08 | 0/5 |
-| DDPG | `scaled_x10` | -3.89 [-4.18, -3.65] | 0.77 | 26,400 | 1.16 | 5/5 |
-| TD3 | `default` | -3.36 [-3.48, -3.24] | 0.97 | 17,600 | 1.87 | 5/5 |
-| TD3 | `dist_only` | -2.10 [-2.46, -1.89] | 0.97 | 14,800 | 0.45 | 5/5 |
-| TD3 | `sparse` | -2.42 [-2.60, -2.22] | 0.95 | 22,400 | 1.10 | 5/5 |
-| TD3 | `progress` | -5.95 [-6.17, -5.72] | 0.58 | never | 1.79 | 0/5 |
-| TD3 | `scaled_x10` | -3.78 [-3.93, -3.62] | 0.90 | 18,800 | 1.67 | 5/5 |
+| DDPG | `default` | -3.73 [-3.88, -3.59] | 0.79 | 26,000 | 0.92 [0.48, 1.47] | 5/5 |
+| DDPG | `dist_only` | -3.12 [-3.58, -2.52] | 0.68 | 21,600 | 1.34 [0.88, 1.75] | 5/5 |
+| DDPG | `sparse` | -3.03 [-3.43, -2.71] | 0.83 | 23,200 | 1.43 [0.90, 2.06] | 5/5 |
+| DDPG | `progress` | -8.22 [-8.99, -7.42] | 0.05 | never | 4.13 [3.40, 5.02] | 0/5 |
+| DDPG | `scaled_x10` | -3.89 [-4.18, -3.65] | 0.77 | 26,400 | 0.84 [0.57, 1.09] | 5/5 |
+| TD3 | `default` | -3.36 [-3.48, -3.24] | 0.97 | 17,600 | 0.57 [0.35, 0.78] | 5/5 |
+| TD3 | `dist_only` | -2.10 [-2.46, -1.89] | 0.97 | 14,800 | 0.41 [0.23, 0.59] | 5/5 |
+| TD3 | `sparse` | -2.42 [-2.60, -2.22] | 0.95 | 22,400 | 1.10 [0.56, 1.73] | 5/5 |
+| TD3 | `progress` | -5.68 [-6.10, -5.32] | 0.63 | never | 1.71 [1.27, 2.11] | 0/5 |
+| TD3 | `scaled_x10` | -3.78 [-3.93, -3.62] | 0.90 | 18,800 | 0.56 [0.22, 0.95] | 5/5 |
 
 TD3 minus DDPG (unpaired bootstrap over seeds):
 
@@ -91,16 +97,16 @@ TD3 minus DDPG (unpaired bootstrap over seeds):
 | `default` | +0.37 [+0.18, +0.56] |
 | `dist_only` | +1.02 [+0.35, +1.60] |
 | `sparse` | +0.60 [+0.22, +1.04] |
-| `progress` | +1.56 [+0.68, +2.48] |
+| `progress` | +2.54 [+1.65, +3.39] |
 | `scaled_x10` | +0.12 [-0.18, +0.45] |
 
 ![Metric comparison](plots/sweep_metric_comparison.png)
 
 What the numbers show:
 - **TD3 beats DDPG on final task return for four of five variants**; for `scaled_x10` the difference is not distinguishable from zero. TD3 also reaches the threshold sooner (`default`: 17,600 vs 26,000 steps) and succeeds more often (`default`: 0.97 vs 0.79).
-- **DDPG is not clearly less stable by maximum drawdown** (`default`: 1.17 for DDPG vs 1.87 for TD3), so "TD3 is better" here means better final performance and speed, not smoother curves.
+- **TD3 also has the lower drawdown in every variant that solved the task**: `default` 0.57 vs 0.92, `scaled_x10` 0.56 vs 0.84, `dist_only` 0.41 vs 1.34, `sparse` 1.10 vs 1.43. Only `dist_only` is clear-cut (the CIs do not overlap); the others overlap.
 - **`sparse` did not fail**: all 10 runs reached the threshold. I expected it might.
-- **`progress` did fail**: 0 of 10 runs reached the threshold, and its policies use very small actions (control cost below). Why is untested; it may reflect my particular formulation (10x scaling, gamma = 1 progress) and not progress shaping in general.
+- **`progress` failed, and not because of the bug I found.** An earlier version credited each action with the previous action's movement (a consequence of `Reacher-v4` measuring distance before the action). Fixing that changed little: TD3 -5.95 to -5.68, DDPG -7.50 to -8.22, and still 0 of 10 runs reached the threshold (final success rate 0.63 for TD3, 0.05 for DDPG). Its policies use very small actions (control cost below). Why it fails is untested; one difference from the other variants is that it has no term for *being* close to the target, only for *getting* closer.
 - **`scaled_x10` changes little**: TD3 -3.78 vs -3.36 for `default` (slightly worse; the CIs do not overlap), DDPG -3.89 vs -3.73.
 
 ### The control-cost caveat
@@ -114,7 +120,7 @@ Mean control cost at nominal (summed `-action^2` per episode; more negative = la
 | `default` | -0.65 | -0.84 |
 | `dist_only` | -31.83 | -42.59 |
 | `sparse` | -28.33 | -35.21 |
-| `progress` | -0.17 | -0.44 |
+| `progress` | -0.16 | -0.42 |
 | `scaled_x10` | -0.66 | -0.76 |
 
 ### Robustness: does the training reward change the safety boundaries?
@@ -136,20 +142,21 @@ Every final policy that solved the task (its own nominal task return at least -4
 | TD3 | `progress` | 5 | 0 |
 | TD3 | `scaled_x10` | 5 | 2 |
 
-Mean safety boundary over the stress-tested seeds (most severe level reached before retention first drops below 0.9; `+` = never failed within the tested range; latency `0.00` = fails already at the first delayed level, 2 steps):
+Median safety boundary over the stress-tested seeds (most severe level reached before retention first drops below 0.9; `+` = never failed within the tested range; latency `0.00` and degradation `1.00` = fails already at the first stressed level). Boundary levels are ordinal and censored, so the median is shown; the mean is in `plots/shaping_boundaries_summary.csv`.
 
 | Algo | Reward variant | n | Degradation (torque scale) | Latency (steps) | Deadband |
 |---|---|---|---|---|---|
 | DDPG | `default` | 2 | 0.80 | 2.00 | 0.10 |
 | DDPG | `dist_only` | 5 | 0.40 | 0.00 | 0.30+ |
 | DDPG | `scaled_x10` | 4 | 0.60 | 2.00 | 0.10 |
-| DDPG | `sparse` | 4 | 0.45 | 0.00 | 0.30+ |
-| TD3 | `default` | 5 | 0.60 | 2.00 | 0.08 |
+| DDPG | `sparse` | 4 | 0.40 | 0.00 | 0.30+ |
+| TD3 | `default` | 5 | 0.60 | 2.00 | 0.10 |
 | TD3 | `dist_only` | 5 | 0.40 | 0.00 | 0.30+ |
 | TD3 | `scaled_x10` | 2 | 0.60 | 2.00 | 0.10 |
 | TD3 | `sparse` | 5 | 0.40 | 0.00 | 0.30+ |
 
-- **The same pattern appears in both algorithms.** `dist_only` and `sparse` stay at about 1.00 retention up to a deadband of 0.3 and keep 0.76-0.81 at 20% torque, but collapse under latency (0.61-0.68 at 2 steps, 0.19-0.26 at 4). `default` and `scaled_x10` are the reverse: about 1.0 at 2 steps of delay and 0.76-0.83 at 4, but only 0.66-0.77 at deadband 0.2 and 0.16-0.23 at 0.3.
+- **The same pattern appears in both algorithms.** `dist_only` and `sparse` stay at about 1.00 retention up to a deadband of 0.3 and keep 0.76-0.81 at 20% torque, but collapse under latency (0.61-0.68 at 2 steps, 0.19-0.26 at 4). `default` and `scaled_x10` are the reverse: 1.02-1.05 at 2 steps of delay and 0.76-0.83 at 4, but only 0.66-0.77 at deadband 0.2 and 0.16-0.23 at 0.3.
+- Retention slightly **above 1** under a 2-step delay means that delay marginally *improves* those policies on the task metric, so a policy's own nominal score is not a ceiling.
 - Untested hypothesis: near-saturated actuation is unaffected by a dead zone, but overshoots when observations are stale. The control-cost table above is consistent with it; it does not prove it.
 - **Selection effect.** Only solved policies are compared, and the sets differ (for example DDPG `default` has 2 of 5, TD3 `scaled_x10` 2 of 5, `progress` none), so a variant's robustness is measured on the policies that happened to succeed.
 
@@ -181,7 +188,7 @@ Use a recent Python (developed on 3.14; only 3.14 was tested): Python 3.12.0 has
 ```bash
 python -m venv .venv
 # activate it: .venv\Scripts\activate (Windows) or source .venv/bin/activate (macOS/Linux)
-pip install torch --index-url https://download.pytorch.org/whl/cu128   # or the CPU build; the sweep needs no GPU
+pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128   # or the CPU build; the sweep needs no GPU
 pip install -r requirements.txt
 python -m ipykernel install --user --name ai_portfolio
 ```
@@ -198,7 +205,7 @@ python scripts/sweep.py --quick          # tiny smoke-test grid, writes to runs/
 pytest                                   # 104 tests
 ```
 
-`plots/training_curve.png` comes from notebook 01 (`scripts/train.py` does not draw it). `--timesteps` must exceed `--learning-starts`, otherwise training would run no gradient updates and the script refuses. Set `DFC_QUICK=1` before launching a notebook for a tiny smoke-test run (outputs go to `plots/quick/`). TensorBoard logs for every sweep run are written to `runs/<run>/tb`; view them with `tensorboard --logdir runs`.
+`plots/training_curve.png` comes from notebook 01 (`scripts/train.py` does not draw it). `--timesteps` must exceed `--learning-starts`, otherwise training would run no gradient updates and the script refuses. Set `DFC_QUICK=1` before launching a notebook for a tiny smoke-test run (outputs go to `plots/quick/`). TensorBoard logs for every sweep run are written to `runs/<run>/tb`; view them with `tensorboard --logdir runs`. Compare the `eval/*` curves across variants, not `rollout/*`: the latter is the shaped training reward, which differs per variant.
 
 ## Limitations
 
@@ -207,6 +214,7 @@ pytest                                   # 104 tests
 - **Sweep:** 5 seeds and 40,000 steps per run is enough for large differences, not small ones. Bootstrap CIs from 5 seeds are crude and there is no formal significance testing. The five reward variants are my choices; the `progress` result in particular may reflect my formulation.
 - **Evaluation protocols differ.** "Seeds that reached -4.0" counts training-time evaluations (seed 1000); robustness eligibility uses the final model on separate episodes (seed 2000), so the two can disagree for policies hovering near the threshold (DDPG `default` reached it in 5 of 5 runs but only 2 of 5 were stress-tested).
 - **Robustness comparison:** reduced stress levels, 10 episodes per condition, and only solved policies (a selection effect, described above).
-- Every evaluation, including the last, reflects the model before the final episode's gradient updates; the saved `final_model.zip` includes them.
+- Every evaluation, including the last, reflects the model one gradient update before the next environment step; the saved `final_model.zip` includes that last update.
+- All results are on `Reacher-v4`, which is deprecated and computes its reward before the action is applied (so the distance metrics and the success check use the pre-action distance). A port to `Reacher-v5` is planned as a separate follow-up, with results kept distinct.
 - `Reacher-v4` still works in Gymnasium 1.4 but is flagged out of date; the code falls back to `v5` automatically if v4 is removed.
 - The sweep runs on the CPU. Weights & Biases logging is implemented and unit-tested with a stub, but has not been run against a live W&B account.

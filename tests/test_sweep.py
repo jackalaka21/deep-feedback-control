@@ -228,3 +228,39 @@ def test_pool_runs_every_grid_cell_end_to_end(tmp_path):
     for item in build_grid(cfg):
         assert is_done(tmp_path / "runs", item)
     assert (tmp_path / "runs" / "random_baseline.json").exists()
+
+
+def test_resume_refuses_runs_made_with_a_different_protocol(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 2
+    run_sweep(cfg, load_config(), workers=1, log=lambda *_: None)
+    changed = {**cfg, "eval_episodes": 3}  # a different evaluation protocol than the finished run used
+    with pytest.raises(ValueError, match="eval_episodes"):
+        run_sweep(changed, load_config(), workers=1, log=lambda *_: None)
+
+
+def test_resume_accepts_legacy_runs_without_a_recorded_protocol(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 2
+    run_sweep(cfg, load_config(), workers=1, log=lambda *_: None)
+    done_path = tmp_path / "runs" / "td3_default_seed0" / "done.json"
+    saved = json.loads(done_path.read_text(encoding="utf-8"))
+    assert "protocol" in saved  # new runs record it
+    del saved["protocol"]  # a run finished before protocols were recorded
+    done_path.write_text(json.dumps(saved), encoding="utf-8")
+    logs = []
+    assert run_sweep(cfg, load_config(), workers=1, log=logs.append) == []
+    assert any("1 already done" in line for line in logs)
+
+
+def test_random_baseline_is_recomputed_when_its_protocol_changes(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 3
+    first = ensure_random_baseline(cfg, load_config())
+    second = ensure_random_baseline({**cfg, "eval_seed": 4321}, load_config())
+    assert second["protocol"]["eval_seed"] == 4321
+    assert second["mean_distance_return"] != first["mean_distance_return"]
+    assert ensure_random_baseline({**cfg, "eval_seed": 4321}, load_config()) == second  # and is cached again

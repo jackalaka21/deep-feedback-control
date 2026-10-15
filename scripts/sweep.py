@@ -142,6 +142,39 @@ def make_spec(sweep_cfg: dict, train_cfg: dict, item: dict) -> dict:
     }
 
 
+PROTOCOL_KEYS = ("timesteps", "learning_starts", "eval_every", "eval_episodes", "eval_seed", "success_radius")
+TRAIN_PROTOCOL_KEYS = ("env_id", "learning_rate", "batch_size", "buffer_size", "action_noise_sigma")
+
+
+def protocol_of(spec: dict) -> dict:
+    """Everything that must match for two runs to be comparable (recorded in done.json)."""
+    out = {k: spec[k] for k in PROTOCOL_KEYS}
+    out.update({k: spec["train_cfg"][k] for k in TRAIN_PROTOCOL_KEYS})
+    return out
+
+
+def check_resume_protocols(sweep_cfg: dict, train_cfg: dict) -> None:
+    """Refuse to resume next to finished runs that were produced with a different protocol.
+
+    Runs finished before protocols were recorded (no "protocol" in done.json) are accepted.
+    """
+    for item in build_grid(sweep_cfg):
+        path = run_dir(sweep_cfg["runs_dir"], item) / "done.json"
+        if not path.exists():
+            continue
+        saved = json.loads(path.read_text(encoding="utf-8")).get("protocol")
+        if saved is None:
+            continue
+        current = protocol_of(make_spec(sweep_cfg, train_cfg, item))
+        diffs = [f"{k}: {saved.get(k)} -> {current[k]}" for k in current if saved.get(k) != current[k]]
+        if diffs:
+            raise ValueError(
+                f"{run_name(item)} was produced with a different protocol ({'; '.join(diffs)}). "
+                f"Delete {path.parent} (or use another runs_dir) to re-run it; mixing protocols "
+                "would silently corrupt the comparison."
+            )
+
+
 def run_one(spec: dict) -> dict:
     """Train one (algo, variant, seed) run on CPU and write eval.csv, final_model.zip, tb/, done.json."""
     torch.set_num_threads(1)
@@ -168,7 +201,7 @@ def run_one(spec: dict) -> dict:
     done = {
         "algo": spec["algo"], "variant": spec["variant"], "seed": spec["seed"],
         "timesteps": spec["timesteps"], "seconds": round(seconds, 1),
-        "final_model": "final_model.zip", **run_metadata(),
+        "final_model": "final_model.zip", "protocol": protocol_of(spec), **run_metadata(),
     }
     (rd / "done.json").write_text(json.dumps(done, indent=2), encoding="utf-8")  # written last
     return done
@@ -182,15 +215,19 @@ def build_grid(sweep_cfg: dict) -> list[dict]:
 
 
 def ensure_random_baseline(sweep_cfg: dict, train_cfg: dict) -> dict:
-    """Random-policy task return over the eval protocol; computed once and cached in the runs dir."""
+    """Random-policy task return over the eval protocol; cached in the runs dir, recomputed if the
+    protocol (eval seed, episode count, env) changed since it was written."""
     runs_dir = resolve_path(sweep_cfg["runs_dir"])
     runs_dir.mkdir(parents=True, exist_ok=True)
     path = runs_dir / "random_baseline.json"
+    n = sweep_cfg["random_baseline_episodes"]
+    protocol = {"eval_seed": sweep_cfg["eval_seed"], "episodes": n, "env_id": train_cfg["env_id"]}
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if cached.get("protocol", protocol) == protocol:  # a legacy file without a protocol is reused
+            return cached
     env = make_base_env(train_cfg["env_id"])
     policy = RandomPolicy(env.action_space, seed=sweep_cfg["eval_seed"])
-    n = sweep_cfg["random_baseline_episodes"]
     dist = [
         run_episode_parts(env, policy, seed=sweep_cfg["eval_seed"] if i == 0 else None)["distance_return"]
         for i in range(n)
@@ -200,6 +237,7 @@ def ensure_random_baseline(sweep_cfg: dict, train_cfg: dict) -> dict:
         "mean_distance_return": float(np.mean(dist)),
         "std_distance_return": float(np.std(dist, ddof=1)) if n > 1 else 0.0,
         "episodes": n,
+        "protocol": protocol,
     }
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
@@ -219,6 +257,7 @@ def quick_config(sweep_cfg: dict) -> dict:
 def run_sweep(sweep_cfg: dict, train_cfg: dict, workers: int | None = None, log=print) -> list[dict]:
     """Run every unfinished grid cell; finished cells (with done.json) are skipped."""
     runs_dir = sweep_cfg["runs_dir"]
+    check_resume_protocols(sweep_cfg, train_cfg)
     grid = build_grid(sweep_cfg)
     pending = [g for g in grid if not is_done(runs_dir, g)]
     log(f"{len(grid)} runs in the grid, {len(grid) - len(pending)} already done, {len(pending)} to run")

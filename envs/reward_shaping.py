@@ -6,6 +6,7 @@ pass through, and evaluation always uses the unshaped environment.
 from __future__ import annotations
 
 import gymnasium as gym
+import numpy as np
 
 VARIANTS = ("default", "dist_only", "sparse", "progress", "scaled_x10")
 
@@ -19,9 +20,19 @@ class RewardShaping(gym.Wrapper):
         self.success_radius = float(success_radius)
         self._prev_distance = None
 
+    def _fingertip_distance(self) -> float:
+        """Distance from the live simulator state, so it is the post-step distance after env.step().
+
+        (Reacher-v4's info["reward_dist"] is computed BEFORE the simulation step and v5's after, so it
+        cannot be used to measure the effect of the action just taken.)
+        """
+        base = self.env.unwrapped
+        return float(np.linalg.norm(base.get_body_com("fingertip") - base.get_body_com("target")))
+
     def reset(self, **kwargs):
-        self._prev_distance = None
-        return self.env.reset(**kwargs)
+        result = self.env.reset(**kwargs)
+        self._prev_distance = self._fingertip_distance() if self.variant == "progress" else None
+        return result
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -42,9 +53,9 @@ class RewardShaping(gym.Wrapper):
         elif self.variant == "sparse":
             shaped = 0.0 if distance <= self.success_radius else -1.0
         elif self.variant == "progress":
-            progress = 0.0 if self._prev_distance is None else self._prev_distance - distance
-            shaped = 10.0 * progress + ctrl_term
+            now = self._fingertip_distance()  # after this action
+            shaped = 10.0 * (self._prev_distance - now) + ctrl_term
+            self._prev_distance = now
         else:  # scaled_x10
             shaped = 10.0 * reward
-        self._prev_distance = distance
         return obs, shaped, terminated, truncated, info

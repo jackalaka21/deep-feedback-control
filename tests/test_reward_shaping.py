@@ -4,12 +4,15 @@ import pytest
 
 from envs import VARIANTS, RewardShaping
 
-DISTANCES = [0.2, 0.1, 0.04]
+# Fingertip-to-target distance of the states s_0, s_1, s_2, s_3 along a scripted episode.
+STATE_DISTANCES = [0.2, 0.1, 0.04, 0.02]
+DISTANCES = STATE_DISTANCES[:3]
 ACTION = np.array([0.3, 0.4])  # control cost = -(0.09 + 0.16) = -0.25
 
 
 class StubEnv(gym.Env):
-    """Reacher-like: reports reward_dist / reward_ctrl in info, like MuJoCo Reacher."""
+    """Reacher-v4-like: info reports the PRE-action distance (reward_dist is computed before the
+    simulation step), while get_body_com reports the live simulator state (post-step after a step)."""
 
     observation_space = gym.spaces.Box(-np.inf, np.inf, (1,), np.float64)
     action_space = gym.spaces.Box(-1.0, 1.0, (2,), np.float64)
@@ -23,8 +26,13 @@ class StubEnv(gym.Env):
         self.t = 0
         return np.array([0.0]), {}
 
+    def get_body_com(self, name):
+        if name == "fingertip":
+            return np.array([STATE_DISTANCES[self.t], 0.0, 0.0])
+        return np.zeros(3)
+
     def step(self, action):
-        d = DISTANCES[self.t % len(DISTANCES)]
+        d = STATE_DISTANCES[self.t]  # distance of the state BEFORE the action is applied
         ctrl = -float(np.sum(np.square(action)))
         self.t += 1
         info = {"reward_dist": -d, "reward_ctrl": ctrl} if self.with_info else {}
@@ -54,10 +62,10 @@ def test_sparse_is_zero_only_within_radius():
     assert rewards("sparse", success_radius=0.15) == pytest.approx([-1.0, 0.0, 0.0])
 
 
-def test_progress_rewards_getting_closer_and_first_step_has_none():
-    # step 1: no previous distance -> progress 0, only control cost
-    # step 2: 10 * (0.2 - 0.1) - 0.25 ; step 3: 10 * (0.1 - 0.04) - 0.25
-    assert rewards("progress") == pytest.approx([-0.25, 0.75, 0.35])
+def test_progress_rewards_the_distance_closed_by_this_very_action():
+    # progress = 10 * (distance before the step - distance AFTER the step) + control cost
+    # step 1: 0.2 -> 0.1 ; step 2: 0.1 -> 0.04 ; step 3: 0.04 -> 0.02  (each minus 0.25 control cost)
+    assert rewards("progress") == pytest.approx([0.75, 0.35, -0.05])
 
 
 def test_progress_state_resets_between_episodes():
@@ -66,7 +74,7 @@ def test_progress_state_resets_between_episodes():
     for _ in DISTANCES:
         env.step(ACTION)
     env.reset()
-    assert env.step(ACTION)[1] == pytest.approx(-0.25)
+    assert env.step(ACTION)[1] == pytest.approx(0.75)  # measured from the new episode's start state
 
 
 def test_scaled_x10_multiplies_reward():
@@ -101,3 +109,20 @@ def test_wrapper_works_on_real_reacher():
     env.reset(seed=0)
     _, reward, _, _, info = env.step(env.action_space.sample())
     assert reward == pytest.approx(info["reward_dist"])
+
+
+def test_progress_uses_post_step_distance_on_real_reacher():
+    pytest.importorskip("mujoco")
+    from envs import make_base_env
+
+    def fingertip_distance(env):
+        base = env.unwrapped
+        return float(np.linalg.norm(base.get_body_com("fingertip") - base.get_body_com("target")))
+
+    env = RewardShaping(make_base_env("Reacher-v4"), "progress")
+    env.reset(seed=0)
+    for _ in range(5):
+        before = fingertip_distance(env)
+        _, reward, _, _, info = env.step(env.action_space.sample())
+        after = fingertip_distance(env)
+        assert reward == pytest.approx(10.0 * (before - after) + info["reward_ctrl"])

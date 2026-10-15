@@ -1,0 +1,11 @@
+algo,variant,n_policies,n_eligible
+ddpg,default,5,2
+ddpg,dist_only,5,5
+ddpg,progress,5,0
+ddpg,scaled_x10,5,4
+ddpg,sparse,5,4
+td3,default,5,5
+td3,dist_only,5,5
+td3,progress,5,0
+td3,scaled_x10,5,2
+td3,sparse,5,5

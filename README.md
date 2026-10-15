@@ -19,7 +19,9 @@ Trained for 150k steps (about 37 minutes wall-clock on the RTX 3070 Ti). Determi
 
 The training curve is recorded with exploration noise on every action, while the evaluation is deterministic, so the curve sits lower and is noisier than the evaluation score.
 
-The random-policy figures in this section come from 60 evaluation episodes. The sweep below uses its own 100-episode random baseline (task return -10.32), so the two random numbers differ slightly.
+The figures in this section come from 60 evaluation episodes per condition; notebook 01 prints a quick 20-episode check (-3.84 for the trained policy, -43.48 for random), which differs slightly because it uses fewer episodes.
+
+The sweep below uses its own 100-episode random baseline (task return -10.32), so the two random numbers differ slightly.
 
 ### Safety boundaries
 

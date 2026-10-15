@@ -103,3 +103,19 @@ def test_end_to_end_on_tiny_trained_policies(tmp_path):
     assert set(raw["algo"]) == {"td3", "ddpg"} and "nominal" in set(raw["stress_type"])
     assert len(raw) == 2 * (1 + 2 + 2 + 2)
     assert paths["png"].stat().st_size > 0 and paths["boundaries"].exists()
+
+
+def test_empty_results_keep_their_columns_and_round_trip_through_csv(tmp_path):
+    # No policy is eligible: the outputs must still be readable CSVs with headers, not empty files.
+    raw = pd.DataFrame(rows_for("td3", "sparse", 0, -9.0, {("latency", 2.0, 1): -9.5}))
+    scored = score_rows(raw, random_distance=-10.0, solve_threshold=-4.0)
+    summary = summarize_robustness(scored)
+    boundaries = policy_boundaries(scored, retention_threshold=0.9)
+    assert summary.empty and {"algo", "variant", "stress_type", "level", "order", "retention_mean",
+                              "retention_lo", "retention_hi", "n_eligible"} <= set(summary.columns)
+    assert boundaries.empty and {"algo", "variant", "seed", "stress_type", "boundary_level",
+                                 "reached"} <= set(boundaries.columns)
+    for name, frame in (("summary", summary), ("boundaries", boundaries)):
+        path = tmp_path / f"{name}.csv"
+        frame.to_csv(path, index=False)
+        assert list(pd.read_csv(path).columns) == list(frame.columns)

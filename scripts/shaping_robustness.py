@@ -33,6 +33,9 @@ from scripts.sweep_analysis import bootstrap_ci, list_completed_runs  # noqa: E4
 from scripts.train import load_config, resolve_path  # noqa: E402
 
 CONFIG_KEY = {"degradation": "degradation", "latency": "latency_steps", "deadband": "deadband"}
+SUMMARY_COLUMNS = ["algo", "variant", "stress_type", "level", "order", "retention_mean",
+                   "retention_lo", "retention_hi", "n_eligible"]
+BOUNDARY_COLUMNS = ["algo", "variant", "seed", "stress_type", "boundary_level", "reached"]
 VARIANT_COLORS = {"default": "#1f77b4", "dist_only": "#ff7f0e", "sparse": "#7f7f7f",
                   "progress": "#2ca02c", "scaled_x10": "#9467bd"}
 
@@ -104,7 +107,7 @@ def summarize_robustness(scored: pd.DataFrame) -> pd.DataFrame:
         rows.append({"algo": algo, "variant": variant, "stress_type": stress, "level": level, "order": order,
                      "retention_mean": mean, "retention_lo": lo, "retention_hi": hi,
                      "n_eligible": int(len(g))})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=SUMMARY_COLUMNS)  # columns kept even when nothing is eligible
 
 
 def policy_boundaries(scored: pd.DataFrame, retention_threshold: float) -> pd.DataFrame:
@@ -115,7 +118,7 @@ def policy_boundaries(scored: pd.DataFrame, retention_threshold: float) -> pd.Da
             b = safety_boundary(g, stress_type, retention_threshold)
             rows.append({"algo": algo, "variant": variant, "seed": seed, "stress_type": stress_type,
                          "boundary_level": b["level"], "reached": b["reached"]})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=BOUNDARY_COLUMNS)  # columns kept even when nothing is eligible
 
 
 def summarize_boundaries(boundaries: pd.DataFrame) -> pd.DataFrame:

@@ -21,7 +21,7 @@ The training curve is recorded with exploration noise on every action, while the
 
 The figures in this section come from 60 evaluation episodes per condition; notebook 01 prints a quick 20-episode check (-3.84 for the trained policy, -43.48 for random), which differs slightly because it uses fewer episodes.
 
-The sweep below uses its own 100-episode random baseline (task return -10.32), so the two random numbers differ slightly.
+The sweep below uses its own 100-episode random baseline (task return -10.32, against -9.78 here), so the two random-policy task returns differ slightly.
 
 ### Safety boundaries
 

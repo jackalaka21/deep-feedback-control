@@ -46,27 +46,36 @@ def load_eval_curves(runs_dir) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)[CURVE_COLUMNS]
 
 
-def run_metrics(curve: pd.DataFrame, threshold: float, last_k: int = 3) -> dict:
+def run_metrics(curve: pd.DataFrame, threshold: float, last_k: int = 3, learning_starts=None) -> dict:
+    """Per-run learning metrics from an evaluation curve.
+
+    `max_drawdown` (largest drop from a running maximum, a measure of instability) only considers
+    evaluations AFTER `learning_starts`: earlier evaluations score the same untrained policy, and the
+    first evaluation after learning begins often dips, which is not instability during learning.
+    With `learning_starts=None` the whole curve is used.
+    """
     c = curve.sort_values("timesteps")
     r = c["mean_distance_return"].to_numpy(dtype=float)
     t = c["timesteps"].to_numpy()
     s = c["success_rate"].to_numpy(dtype=float)
     k = min(last_k, len(r))
     reached = np.nonzero(r >= threshold)[0]
-    running_max = np.maximum.accumulate(r)
+    post = r if learning_starts is None else r[t > learning_starts]
+    drawdown = float((np.maximum.accumulate(post) - post).max()) if post.size else float("nan")
     return {
         "final_return": float(r[-k:].mean()),
         "final_success": float(s[-k:].mean()),
         "auc": float(r.mean()),
         "steps_to_threshold": float(t[reached[0]]) if reached.size else float("nan"),
-        "max_drawdown": float((running_max - r).max()),
+        "max_drawdown": drawdown,
     }
 
 
-def per_run_table(curves: pd.DataFrame, threshold: float) -> pd.DataFrame:
+def per_run_table(curves: pd.DataFrame, threshold: float, learning_starts=None) -> pd.DataFrame:
     rows = []
     for (algo, variant, seed), group in curves.groupby(["algo", "variant", "seed"], sort=True):
-        rows.append({"algo": algo, "variant": variant, "seed": seed, **run_metrics(group, threshold)})
+        rows.append({"algo": algo, "variant": variant, "seed": seed,
+                     **run_metrics(group, threshold, learning_starts=learning_starts)})
     return pd.DataFrame(rows)
 
 
@@ -185,13 +194,13 @@ def plot_metric_comparison(summary: pd.DataFrame):
     return fig
 
 
-def write_sweep_outputs(runs_dir, out_dir, threshold: float) -> dict:
+def write_sweep_outputs(runs_dir, out_dir, threshold: float, learning_starts=None) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     curves = load_eval_curves(runs_dir)
     baseline_path = resolve_path(runs_dir) / "random_baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    per_run = per_run_table(curves, threshold)
+    per_run = per_run_table(curves, threshold, learning_starts)
     summary = summarize_runs(per_run)
     diffs = compare_algos(per_run)
 
@@ -229,7 +238,8 @@ def main(argv=None) -> None:
     p.add_argument("--out", default="plots")
     args = p.parse_args(argv)
     cfg = load_sweep_config()
-    paths = write_sweep_outputs(args.runs_dir or cfg["runs_dir"], resolve_path(args.out), cfg["solve_threshold"])
+    paths = write_sweep_outputs(args.runs_dir or cfg["runs_dir"], resolve_path(args.out), cfg["solve_threshold"],
+                                cfg["learning_starts"])
     summary = pd.read_csv(paths["summary"])
     cols = ["algo", "variant", "n_seeds", "n_reached", "final_return_mean", "final_success_mean",
             "max_drawdown_mean"]

@@ -122,11 +122,17 @@ def policy_boundaries(scored: pd.DataFrame, retention_threshold: float) -> pd.Da
 
 
 def summarize_boundaries(boundaries: pd.DataFrame) -> pd.DataFrame:
+    """Per algo/variant/stress: median and mean boundary level over eligible seeds.
+
+    Boundary levels are ordinal and censored (a policy that never failed within the tested range reports
+    the last level), so the median is the better summary; the mean is kept for reference.
+    """
     if boundaries.empty:
-        return pd.DataFrame(columns=["algo", "variant", "stress_type", "boundary_mean", "n_eligible",
-                                     "n_not_reached"])
+        return pd.DataFrame(columns=["algo", "variant", "stress_type", "boundary_median", "boundary_mean",
+                                     "n_eligible", "n_not_reached"])
     return (boundaries.groupby(["algo", "variant", "stress_type"], as_index=False)
-            .agg(boundary_mean=("boundary_level", "mean"), n_eligible=("seed", "count"),
+            .agg(boundary_median=("boundary_level", "median"), boundary_mean=("boundary_level", "mean"),
+                 n_eligible=("seed", "count"),
                  n_not_reached=("reached", lambda s: int((~s.astype(bool)).sum()))))
 
 

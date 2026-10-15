@@ -82,6 +82,17 @@ def test_boundaries_use_first_failure_and_skip_ineligible():
     assert row["boundary_level"] == 2.0 and bool(row["reached"])
     summary = summarize_boundaries(b)
     assert summary.iloc[0]["n_eligible"] == 1
+    assert summary.iloc[0]["boundary_median"] == 2.0
+
+
+def test_boundary_summary_reports_median_and_counts_not_only_a_mean():
+    b = pd.DataFrame([
+        dict(algo="td3", variant="default", seed=s, stress_type="deadband", boundary_level=lv, reached=r)
+        for s, (lv, r) in enumerate([(0.0, True), (0.1, True), (0.1, True), (0.1, True), (0.1, True)])
+    ])
+    row = summarize_boundaries(b).iloc[0]
+    assert row["boundary_mean"] == pytest.approx(0.08) and row["boundary_median"] == pytest.approx(0.1)
+    assert row["n_eligible"] == 5 and row["n_not_reached"] == 0
 
 
 def test_end_to_end_on_tiny_trained_policies(tmp_path):

@@ -42,6 +42,31 @@ def test_run_metrics_short_curve():
     assert m["final_return"] == pytest.approx(-4.5) and m["steps_to_threshold"] == 2000
 
 
+def test_run_metrics_drawdown_ignores_evaluations_before_learning_starts():
+    # Evaluations at 0, 2000, 4000 precede learning_starts=5000 (an untrained, flat segment); the
+    # first evaluation after learning begins can dip. That dip is not instability during learning.
+    c = curve([-9.0, -9.0, -9.0, -10.5, -6.0, -4.0])
+    assert run_metrics(c, -4.0)["max_drawdown"] == pytest.approx(1.5)  # legacy: whole curve
+    assert run_metrics(c, -4.0, learning_starts=5000)["max_drawdown"] == 0.0
+
+
+def test_run_metrics_drawdown_still_detects_instability_after_learning_starts():
+    c = curve([-9.0, -9.0, -9.0, -5.0, -3.0, -6.0])
+    assert run_metrics(c, -4.0, learning_starts=5000)["max_drawdown"] == pytest.approx(3.0)
+
+
+def test_run_metrics_drawdown_is_nan_without_post_learning_evaluations():
+    m = run_metrics(curve([-9.0, -9.0]), -4.0, learning_starts=5000)
+    assert np.isnan(m["max_drawdown"]) and m["final_return"] == pytest.approx(-9.0)
+
+
+def test_per_run_table_passes_learning_starts_to_drawdown(tmp_path):
+    make_fake_runs(tmp_path, [("td3", "default", 0, [-9.0, -9.0, -9.0, -10.5, -6.0, -4.0], None)])
+    curves = load_eval_curves(tmp_path)
+    assert per_run_table(curves, -4.0)["max_drawdown"].iloc[0] == pytest.approx(1.5)
+    assert per_run_table(curves, -4.0, learning_starts=5000)["max_drawdown"].iloc[0] == 0.0
+
+
 def test_bootstrap_ci_constant_sample_is_exact():
     assert bootstrap_ci([2.0, 2.0, 2.0]) == (2.0, 2.0, 2.0)
 

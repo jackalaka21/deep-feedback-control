@@ -1,10 +1,14 @@
 """Reward-shaping sweep: DDPG vs TD3 across training-reward variants and seeds."""
 from __future__ import annotations
 
+import argparse
+import itertools
 import json
+import multiprocessing
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -168,3 +172,105 @@ def run_one(spec: dict) -> dict:
     }
     (rd / "done.json").write_text(json.dumps(done, indent=2), encoding="utf-8")  # written last
     return done
+
+
+def build_grid(sweep_cfg: dict) -> list[dict]:
+    return [
+        {"algo": a, "variant": v, "seed": s}
+        for a, v, s in itertools.product(sweep_cfg["algos"], sweep_cfg["variants"], sweep_cfg["seeds"])
+    ]
+
+
+def ensure_random_baseline(sweep_cfg: dict, train_cfg: dict) -> dict:
+    """Random-policy task return over the eval protocol; computed once and cached in the runs dir."""
+    runs_dir = resolve_path(sweep_cfg["runs_dir"])
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    path = runs_dir / "random_baseline.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    env = make_base_env(train_cfg["env_id"])
+    policy = RandomPolicy(env.action_space, seed=sweep_cfg["eval_seed"])
+    n = sweep_cfg["random_baseline_episodes"]
+    dist = [
+        run_episode_parts(env, policy, seed=sweep_cfg["eval_seed"] if i == 0 else None)["distance_return"]
+        for i in range(n)
+    ]
+    env.close()
+    result = {
+        "mean_distance_return": float(np.mean(dist)),
+        "std_distance_return": float(np.std(dist, ddof=1)) if n > 1 else 0.0,
+        "episodes": n,
+    }
+    path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
+
+
+def quick_config(sweep_cfg: dict) -> dict:
+    """A tiny grid and budget for smoke tests; writes under <runs_dir>/quick (git-ignored)."""
+    q = dict(sweep_cfg)
+    q.update(
+        variants=sweep_cfg["variants"][:2], seeds=sweep_cfg["seeds"][:1], timesteps=800,
+        learning_starts=200, eval_every=400, eval_episodes=2, random_baseline_episodes=10,
+        runs_dir=str(Path(sweep_cfg["runs_dir"]) / "quick"), workers=min(2, sweep_cfg["workers"]),
+    )
+    return q
+
+
+def run_sweep(sweep_cfg: dict, train_cfg: dict, workers: int | None = None, log=print) -> list[dict]:
+    """Run every unfinished grid cell; finished cells (with done.json) are skipped."""
+    runs_dir = sweep_cfg["runs_dir"]
+    grid = build_grid(sweep_cfg)
+    pending = [g for g in grid if not is_done(runs_dir, g)]
+    log(f"{len(grid)} runs in the grid, {len(grid) - len(pending)} already done, {len(pending)} to run")
+    ensure_random_baseline(sweep_cfg, train_cfg)
+    specs = [make_spec(sweep_cfg, train_cfg, g) for g in pending]
+    workers = workers or sweep_cfg["workers"]
+
+    results, failures = [], []
+
+    def finished(i, spec, done=None, error=None):
+        if error is not None:
+            failures.append(f"{run_name(spec)}: {error}")
+            log(f"[{i}/{len(specs)}] {run_name(spec)} FAILED: {error}")
+        else:
+            results.append(done)
+            log(f"[{i}/{len(specs)}] {run_name(spec)} finished in {done['seconds'] / 60:.1f} min")
+
+    if workers <= 1 or len(specs) <= 1:
+        for i, spec in enumerate(specs, 1):
+            try:
+                finished(i, spec, done=run_one(spec))
+            except Exception as exc:  # keep going; report at the end
+                finished(i, spec, error=exc)
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            futures = {pool.submit(run_one, s): s for s in specs}
+            for i, fut in enumerate(as_completed(futures), 1):
+                try:
+                    finished(i, futures[fut], done=fut.result())
+                except Exception as exc:
+                    finished(i, futures[fut], error=exc)
+    if failures:
+        raise RuntimeError(
+            "some runs failed (finished runs were kept; re-launch to retry): " + "; ".join(failures)
+        )
+    return results
+
+
+def main(argv=None) -> None:
+    p = argparse.ArgumentParser(description="Run the DDPG/TD3 reward-shaping sweep (resumable).")
+    p.add_argument("--config", default=None, help="sweep config (default configs/sweep_config.yaml)")
+    p.add_argument("--train-config", default=None, help="training config (default configs/td3_config.yaml)")
+    p.add_argument("--workers", type=int, default=None)
+    p.add_argument("--quick", action="store_true", help="tiny grid and budget, writes to runs/quick")
+    args = p.parse_args(argv)
+    sweep_cfg = load_sweep_config(args.config)
+    if args.quick:
+        sweep_cfg = quick_config(sweep_cfg)
+    run_sweep(sweep_cfg, load_config(args.train_config), workers=args.workers)
+    print("Done. Next: python scripts/sweep_analysis.py ; python scripts/shaping_robustness.py")
+
+
+if __name__ == "__main__":
+    main()

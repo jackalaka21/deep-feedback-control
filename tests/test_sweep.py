@@ -134,3 +134,97 @@ def test_run_one_writes_all_outputs(tmp_path, algo):
     assert {"mean_distance_return", "success_rate"} <= set(curve.columns)
     assert (rd / "final_model.zip").exists()
     assert any((rd / "tb").rglob("events.out.tfevents.*"))
+
+
+import scripts.sweep as sweep  # noqa: E402
+from scripts.sweep import build_grid, ensure_random_baseline, quick_config, run_sweep  # noqa: E402
+
+
+def one_run_cfg(tmp_path, variants=("default",)):
+    cfg = quick_config(load_sweep_config())
+    cfg.update(algos=["td3"], variants=list(variants), seeds=[0], runs_dir=str(tmp_path / "runs"),
+               workers=1)
+    return cfg
+
+
+def test_grid_enumerates_algos_variants_seeds_in_order():
+    cfg = load_sweep_config()
+    grid = build_grid(cfg)
+    assert len(grid) == 2 * 5 * 5
+    assert grid[0] == {"algo": "td3", "variant": "default", "seed": 0}
+    assert grid[1] == {"algo": "td3", "variant": "default", "seed": 1}
+    assert grid[-1] == {"algo": "ddpg", "variant": "scaled_x10", "seed": 4}
+    assert len({(g["algo"], g["variant"], g["seed"]) for g in grid}) == 50
+
+
+def test_quick_config_is_small_and_isolated():
+    q = quick_config(load_sweep_config())
+    assert len(build_grid(q)) <= 4 and q["timesteps"] <= 1000 and q["runs_dir"].endswith("quick")
+    assert q["learning_starts"] < q["timesteps"] and q["timesteps"] % q["eval_every"] == 0
+
+
+def test_random_baseline_is_computed_once_and_cached(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 3
+    first = ensure_random_baseline(cfg, load_config())
+    assert first["mean_distance_return"] < -3 and first["episodes"] == 3
+    path = tmp_path / "runs" / "random_baseline.json"
+    stamp = path.stat().st_mtime_ns
+    assert ensure_random_baseline(cfg, load_config()) == first
+    assert path.stat().st_mtime_ns == stamp
+
+
+def test_finished_run_is_skipped_on_relaunch(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 2
+    logs = []
+    run_sweep(cfg, load_config(), workers=1, log=logs.append)
+    done_path = tmp_path / "runs" / "td3_default_seed0" / "done.json"
+    stamp = done_path.stat().st_mtime_ns
+    logs.clear()
+    results = run_sweep(cfg, load_config(), workers=1, log=logs.append)
+    assert results == [] and done_path.stat().st_mtime_ns == stamp
+    assert any("1 already done" in line for line in logs)
+
+
+def test_partial_run_without_done_json_is_rerun(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path)
+    cfg["random_baseline_episodes"] = 2
+    run_sweep(cfg, load_config(), workers=1, log=lambda *_: None)
+    rd = tmp_path / "runs" / "td3_default_seed0"
+    (rd / "done.json").unlink()  # simulate a crash after eval.csv was written
+    (rd / "eval.csv").write_text("garbage", encoding="utf-8")
+    results = run_sweep(cfg, load_config(), workers=1, log=lambda *_: None)
+    assert len(results) == 1 and (rd / "done.json").exists()
+    assert "garbage" not in (rd / "eval.csv").read_text(encoding="utf-8")
+
+
+def test_worker_failure_is_isolated_and_reported(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    cfg = one_run_cfg(tmp_path, variants=("default", "dist_only"))
+    cfg["random_baseline_episodes"] = 2
+    real_run_one = sweep.run_one
+
+    def flaky(spec):
+        if spec["variant"] == "dist_only":
+            raise RuntimeError("boom")
+        return real_run_one(spec)
+
+    monkeypatch.setattr(sweep, "run_one", flaky)
+    with pytest.raises(RuntimeError, match="td3_dist_only_seed0"):
+        run_sweep(cfg, load_config(), workers=1, log=lambda *_: None)
+    assert (tmp_path / "runs" / "td3_default_seed0" / "done.json").exists()  # the other run was kept
+
+
+def test_pool_runs_every_grid_cell_end_to_end(tmp_path):
+    pytest.importorskip("mujoco")
+    cfg = quick_config(load_sweep_config())
+    cfg.update(runs_dir=str(tmp_path / "runs"), workers=2, random_baseline_episodes=2)
+    results = run_sweep(cfg, load_config(), workers=2, log=lambda *_: None)
+    assert len(results) == len(build_grid(cfg)) == 4
+    for item in build_grid(cfg):
+        assert is_done(tmp_path / "runs", item)
+    assert (tmp_path / "runs" / "random_baseline.json").exists()

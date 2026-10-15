@@ -1,3 +1,4 @@
+from .reward_shaping import VARIANTS, RewardShaping
 from .stress_wrappers import (
     ActuatorDeadband,
     MotorDegradation,
@@ -10,6 +11,8 @@ __all__ = [
     "ActuatorDeadband",
     "MotorDegradation",
     "ObservationLatency",
+    "RewardShaping",
+    "VARIANTS",
     "make_base_env",
     "make_stressed_env",
 ]

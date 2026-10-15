@@ -1,0 +1,21 @@
+# Reward-shaping sweep: DDPG vs TD3 across training-reward variants and seeds.
+algos: [td3, ddpg]
+variants: [default, dist_only, sparse, progress, scaled_x10]
+seeds: [0, 1, 2, 3, 4]
+timesteps: 40000
+learning_starts: 5000
+eval_every: 2000
+eval_episodes: 10
+eval_seed: 1000
+random_baseline_episodes: 100
+workers: 8                  # parallel single-threaded CPU processes; benchmarked: 8 is the peak, 12 collapses
+solve_threshold: -4.0       # task return (-sum distance) that counts as "solved"; about 0.87 retention
+runs_dir: runs
+
+robustness:                 # reduced IPQC battery applied to every solved final policy
+  episodes: 10
+  eval_seed: 2000
+  degradation: [1.0, 0.6, 0.4, 0.2]
+  latency_steps: [0, 2, 4]
+  deadband: [0.0, 0.1, 0.2, 0.3]
+  retention_threshold: 0.9

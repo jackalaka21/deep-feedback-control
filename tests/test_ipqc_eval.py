@@ -148,8 +148,13 @@ class ZeroModel:
         return np.zeros(2, dtype=np.float32), None
 
 
-def test_sweep_covers_every_condition():
+def test_sweep_covers_every_condition(monkeypatch):
     pytest.importorskip("mujoco")
+    import scripts.evaluate_ipqc as ev
+
+    # ZeroModel does nothing, so it is (correctly) no better than random; the fail-fast guard has its
+    # own test, and this test is about condition coverage only.
+    monkeypatch.setattr(ev, "_check_baselines", lambda rows: None)
     cfg = load_config()
     ip = cfg["ipqc"]
     df = run_ipqc_sweep(ZeroModel(), cfg, episodes_per_seed=1, seeds=[0])
@@ -157,7 +162,8 @@ def test_sweep_covers_every_condition():
     assert len(df) == expected
     assert set(df.stress_type) == {"random", "nominal", "degradation", "latency", "deadband"}
     assert list(df.columns) == ["stress_type", "level", "order", "seed", "episode",
-                                "episode_return", "distance_return", "control_return"]
+                                "episode_return", "distance_return", "control_return",
+                                "final_distance"]
 
 
 def test_episode_parts_split_total_into_distance_and_control():
@@ -172,3 +178,44 @@ def test_episode_parts_split_total_into_distance_and_control():
     rand = run_episode_parts(env, RandomPolicy(env.action_space, 0), seed=0)
     assert rand["control_return"] < -5  # random torques are expensive
     assert rand["distance_return"] + rand["control_return"] == pytest.approx(rand["episode_return"])
+
+
+def test_final_distance_matches_last_step_distance():
+    pytest.importorskip("mujoco")
+    from envs import make_base_env
+    from scripts.evaluate_ipqc import run_episode_parts
+
+    cfg = load_config()
+    env = make_base_env(cfg["env_id"])
+    parts = run_episode_parts(env, ZeroModel(), seed=0)
+    env2 = make_base_env(cfg["env_id"])
+    env2.reset(seed=0)
+    done = False
+    while not done:
+        _, _, te, tr, info = env2.step(np.zeros(2, dtype=np.float32))
+        done = te or tr
+    assert parts["final_distance"] == pytest.approx(-info["reward_dist"])
+    assert parts["final_distance"] >= 0
+
+
+def test_sweep_fails_fast_when_nominal_is_not_better_than_random(monkeypatch):
+    import scripts.evaluate_ipqc as ev
+
+    calls = []
+
+    def fake_parts(env, policy, seed=None):
+        calls.append(type(policy).__name__)
+        d = -5.0 if isinstance(policy, ev.RandomPolicy) else -20.0  # model is worse than random
+        return {"episode_return": d, "distance_return": d, "control_return": 0.0, "final_distance": 0.1}
+
+    monkeypatch.setattr(ev, "run_episode_parts", fake_parts)
+    cfg = load_config()
+    with pytest.raises(ValueError, match="Nominal return"):
+        ev.run_ipqc_sweep(ZeroModel(), cfg, episodes_per_seed=2, seeds=[0])
+    assert len(calls) == 4  # random (2) + nominal (2) only; none of the stress levels ran
+
+
+def test_summarize_names_missing_baseline_rows():
+    df = episode_df({("nominal", 0.0, 0): -5.0, ("degradation", 1.0, 0): -5.0})
+    with pytest.raises(ValueError, match="random"):
+        summarize(df)

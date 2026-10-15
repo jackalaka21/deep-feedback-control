@@ -49,6 +49,7 @@ def run_episode_parts(env, policy, seed=None) -> dict:
     """
     obs, _ = env.reset(seed=seed)
     total = distance = control = 0.0
+    final_distance = float("nan")
     done = False
     while not done:
         action, _ = policy.predict(obs, deterministic=True)
@@ -56,8 +57,10 @@ def run_episode_parts(env, policy, seed=None) -> dict:
         total += float(reward)
         distance += float(info["reward_dist"])
         control += float(info["reward_ctrl"])
+        final_distance = -float(info["reward_dist"])
         done = terminated or truncated
-    return {"episode_return": total, "distance_return": distance, "control_return": control}
+    return {"episode_return": total, "distance_return": distance,
+            "control_return": control, "final_distance": final_distance}
 
 
 def run_episode(env, policy, seed=None) -> float:
@@ -86,6 +89,17 @@ def _conditions(ipqc: dict):
     return conds
 
 
+def _check_baselines(rows) -> None:
+    df = pd.DataFrame(rows)
+    r_rand = df.loc[df.stress_type == "random", "distance_return"].mean()
+    r_nom = df.loc[df.stress_type == "nominal", "distance_return"].mean()
+    if r_nom <= r_rand:
+        raise ValueError(
+            f"Nominal return ({r_nom:.2f}, task/distance) is not better than the random policy "
+            f"({r_rand:.2f}); the model is not trained well enough to stress-test. Train longer."
+        )
+
+
 def run_ipqc_sweep(model, cfg: dict, episodes_per_seed=None, seeds=None) -> pd.DataFrame:
     ipqc = cfg["ipqc"]
     n_eps = episodes_per_seed or ipqc["episodes_per_seed"]
@@ -102,6 +116,8 @@ def run_ipqc_sweep(model, cfg: dict, episodes_per_seed=None, seeds=None) -> pd.D
                          seed=seed, episode=ep, **parts)
                 )
             env.close()
+        if stress_type == "nominal":
+            _check_baselines(rows)  # fail fast, before the long stress sweep
     return pd.DataFrame(rows)
 
 
@@ -125,6 +141,9 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
     `total_score` is retention on the full reward, which also includes the control-cost term that
     stresses artificially shrink; it is reported for transparency but flatters deadband/degradation.
     """
+    missing = [name for name in ("random", "nominal") if name not in set(df["stress_type"])]
+    if missing:
+        raise ValueError(f"summarize needs 'random' and 'nominal' baseline rows; missing: {missing}")
     g = df.groupby(["stress_type", "level", "order"], as_index=False).agg(
         mean_return=("episode_return", "mean"),
         std_return=("episode_return", "std"),

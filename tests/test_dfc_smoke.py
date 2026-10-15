@@ -13,11 +13,14 @@ def test_train_cpu_smoke(tmp_path):
     assert res.model.device.type == "cpu"
 
 
-def test_train_save_load_evaluate_roundtrip(tmp_path):
+def test_train_save_load_evaluate_roundtrip(tmp_path, monkeypatch):
     """The path a user actually takes: train, save, reload from disk, run the stress sweep."""
     pytest.importorskip("mujoco")
+    import scripts.evaluate_ipqc as ev
     from scripts.evaluate_ipqc import load_policy, run_ipqc_sweep
 
+    # A 300-step model is not expected to beat random; the fail-fast guard has its own test.
+    monkeypatch.setattr(ev, "_check_baselines", lambda rows: None)
     cfg = load_config()
     res = train(cfg, timesteps=300, learning_starts=100, model_path=tmp_path / "m", device="cpu", verbose=0)
     reloaded = load_policy(res.model_path)

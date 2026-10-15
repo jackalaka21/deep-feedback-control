@@ -1,6 +1,6 @@
 # Deep Feedback Control
 
-A TD3 policy learns to drive a 2-joint MuJoCo arm (`Reacher`) to a random target, and an **IPQC-style stress-testing harness** then breaks it on purpose: delayed sensors, sticky actuators and worn motors. The result is a measured *safety boundary* for each failure mode, not just a reward curve.
+A TD3 policy learns to drive a 2-joint MuJoCo arm (`Reacher`) to a random target, and an **IPQC-style (in-process quality control) stress-testing harness** then breaks it on purpose: delayed sensors, sticky actuators and worn motors. The result is a measured *safety boundary* for each failure mode, not just a reward curve.
 
 A second part compares **DDPG and TD3 across five training-reward variants** (50 runs) and stress-tests the resulting policies, to see how the training reward changes learning stability and robustness.
 
@@ -17,7 +17,9 @@ Trained for 150k steps (about 37 minutes wall-clock on the RTX 3070 Ti). Determi
 
 ![Training curve](plots/training_curve.png)
 
-The training curve is noisier and lower than the evaluation score because training adds exploration noise to every action.
+The training curve is recorded with exploration noise on every action, while the evaluation is deterministic, so the curve sits lower and is noisier than the evaluation score.
+
+The random-policy figures in this section come from 60 evaluation episodes. The sweep below uses its own 100-episode random baseline (task return -10.32), so the two random numbers differ slightly.
 
 ### Safety boundaries
 
@@ -31,7 +33,7 @@ Each stress level gets a **retention score** on the *task* measure: `(R - R_rand
 
 What the measurements show:
 - **Latency:** the arm still reaches the target through 3 steps of delay (0.981), but its control effort rises sharply: the control-cost part goes from -0.72 (no delay) to -3.12 at 3 steps and -7.57 at 4. Past 3 steps reaching degrades (0.778 at 4, 0.553 at 5).
-- **Deadband:** the most fragile mode at the levels tested. The playbook's 0.05 costs little (0.984), but 0.2 already drops retention to 0.675, and at 0.5 the arm is worse than a random policy at reaching the target (-0.201).
+- **Deadband:** retention falls steadily. A threshold of 0.05 costs little (0.984), but 0.2 already drops it to 0.675, and at 0.5 the arm is worse than a random policy at reaching the target (-0.201).
 - **Degradation:** graceful. 0.911 at 60% torque, 0.595 even at 20%.
 - Levels are in different units for each stress, so the boundaries are not a ranking of which failure is "worse".
 
@@ -202,7 +204,7 @@ python scripts/sweep.py                  # the 50-run reward-shaping sweep; resu
 python scripts/sweep_analysis.py         # learning curves, tables and bootstrap CIs in plots/
 python scripts/shaping_robustness.py     # stress-test every solved final policy
 python scripts/sweep.py --quick          # tiny smoke-test grid, writes to runs/quick
-pytest                                   # 104 tests
+pytest                                   # 113 tests
 ```
 
 `plots/training_curve.png` comes from notebook 01 (`scripts/train.py` does not draw it). `--timesteps` must exceed `--learning-starts`, otherwise training would run no gradient updates and the script refuses. Set `DFC_QUICK=1` before launching a notebook for a tiny smoke-test run (outputs go to `plots/quick/`). TensorBoard logs for every sweep run are written to `runs/<run>/tb`; view them with `tensorboard --logdir runs`. Compare the `eval/*` curves across variants, not `rollout/*`: the latter is the shaped training reward, which differs per variant.

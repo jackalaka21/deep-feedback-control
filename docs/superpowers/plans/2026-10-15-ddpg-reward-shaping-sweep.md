@@ -2663,4 +2663,4 @@ git commit -m "docs: report the DDPG and reward-shaping sweep and update the REA
 
 - [ ] **Step 5: Ask the user before pushing**
 
-Report what ran (including the measured sweep wall-clock versus the estimate and any run that had to be retried), what the headline results are, and any negative results. Then ask whether to push to the remote. Pushing needs the personal GitHub token (`GH_TOKEN="$(gh auth token --user jackalaka21)"`), not the default gh account.
+Report what ran (including the measured sweep wall-clock versus the estimate and any run that had to be retried), what the headline results are, and any negative results. Then ask whether to push to the remote.

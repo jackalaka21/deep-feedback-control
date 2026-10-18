@@ -1,6 +1,8 @@
 # Deep Feedback Control
 
-A TD3 policy learns to drive a 2-joint MuJoCo arm (`Reacher`) to a random target, and an **IPQC-style (in-process quality control) stress-testing harness** then breaks it on purpose: delayed sensors, sticky actuators and worn motors. The result is a measured *safety boundary* for each failure mode, not just a reward curve.
+A TD3 policy learns to drive a 2-joint MuJoCo arm (`Reacher`) to a random target, and an **IPQC-style (in-process quality control) stress-testing harness** then breaks it on purpose: delayed sensors, sticky actuators and worn motors. The result is a measured *safety boundary* for each failure mode.
+
+The IPQC idea comes from my work at Biobot, where I worked on a similar process. This repository is independent of that work: it runs only on simulated MuJoCo environments and contains no Biobot data or code.
 
 A second part compares **DDPG and TD3 across five training-reward variants** (50 runs) and stress-tests the resulting policies, to see how the training reward changes learning stability and robustness.
 
